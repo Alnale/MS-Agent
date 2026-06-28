@@ -1,0 +1,22 @@
+[package]
+name = "agent-teams-provider"
+version = "1.3.0"
+edition = "2021"
+
+[dependencies]
+agent-teams-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+pin-project-lite = { workspace = true }
+rand = { workspace = true }
+dashmap = { workspace = true }
+secrecy = { workspace = true }
+lru = { workspace = true }

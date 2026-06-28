@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+
+# Build output
+frontend/dist/
+main-sub-agent-system/target/
+
+# Release directory
+release/
+
+# Environment variables (contains API keys)
+.env
+main-sub-agent-system/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temp
+tmp/
+temp/
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Rust
+*.pdb
+main-sub-agent-system/Cargo.lock
+
+# Embedded Python (large, downloaded at build time)
+tools/DocFlow/python/
+tools/xxt/python/
+
+# Test output
+frontend/tests/
+
+# Claude Code
+.claude/
+
+# Large binary/media files
+frontend/gif/
+frontend/pic/
+frontend/music/
+frontend/public/
+Test/
+
+# Vendored libraries
+frontend/liquid-glass-react-master/
+
+# Browser profiles (xxt tool)
+main-sub-agent-system/tools/xxt/.browser_profile/
+main-sub-agent-system/tools/xxt/.user_data/
+
+# Screenshots (tool test results)
+main-sub-agent-system/tools/screenshots/
+
+# DocFlow large files
+main-sub-agent-system/tools/DocFlow/*.db
+main-sub-agent-system/tools/DocFlow/*.mp3
+main-sub-agent-system/tools/DocFlow/fonts/
+main-sub-agent-system/tools/DocFlow/help_docs/
+main-sub-agent-system/tools/DocFlow/music/
+
+# Node
+frontend/node_modules/

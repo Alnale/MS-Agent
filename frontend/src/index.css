@@ -1,0 +1,125 @@
+:root {
+  /* Core palette — refined sakura + lavender */
+  --pink: #F280A0;
+  --pink-light: #F9B0C8;
+  --pink-soft: #FDDDE6;
+  --pink-glow: rgba(242, 128, 160, 0.2);
+  --lavender: #B8A9E8;
+  --lavender-light: #D8CEF4;
+  --lavender-dim: rgba(184, 169, 232, 0.12);
+  --mint: #8DD8B0;
+  --mint-light: #C6EDDA;
+  --peach: #F5C8A0;
+  --cream: #FDF8F5;
+  --white: #FFFFFF;
+  --bg-pink: #FFF2F6;
+  --bg-lavender: #F6F2FF;
+  --bg-mint: #F0FFF6;
+
+  --bg-primary: var(--cream);
+  --bg-secondary: var(--white);
+  --bg-tertiary: var(--bg-pink);
+  --bg-input: var(--white);
+  --bg-user-msg: linear-gradient(135deg, var(--pink), var(--lavender));
+  --bg-assistant-msg: var(--white);
+
+  --text-primary: #3D3450;
+  --text-secondary: #6E6080;
+  --text-muted: #8A7D9B;
+
+  --accent: var(--pink);
+  --accent-hover: #E86D8F;
+  --accent-dim: var(--pink-glow);
+
+  --border: var(--pink-soft);
+  --border-focus: var(--pink);
+
+  --success: #6BCB77;
+  --warning: #F5C861;
+  --error: #F06080;
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  --font-sans: 'Nunito', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Nunito', ui-monospace, Consolas, monospace;
+
+  --shadow-sm: 0 2px 8px rgba(184, 169, 232, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --shadow-md: 0 4px 20px rgba(242, 128, 160, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --shadow-float: 0 8px 32px rgba(184, 169, 232, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(135deg, #FDF8F5 0%, #F8F0FF 30%, #F0F4FF 60%, #FDF8F5 100%);
+  background-size: 200% 200%;
+  animation: bg-drift 20s ease-in-out infinite;
+}
+
+@keyframes bg-drift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Respect user preference for reduced motion — disables all animations */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Legacy aliases used by ErrorBoundary */
+:root {
+  --bg: var(--bg-primary);
+  --text: var(--text-primary);
+  --glass: linear-gradient(180deg, rgba(255,255,255,0.94) 0%, rgba(253,248,245,0.90) 100%);
+  --glass-border: rgba(242,128,160,0.15);
+  --primary: var(--pink);
+  --primary-hover: var(--accent-hover);
+}
+
+::selection {
+  background: var(--pink-light);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--pink-light);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pink);
+}

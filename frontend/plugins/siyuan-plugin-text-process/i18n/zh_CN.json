@@ -1,0 +1,80 @@
+{
+    "addTopBarIcon": "粘贴时自动处理",
+    "pasteOptions": {
+        "LaTeXConversion": "LaTex公式自动转换",
+        "removeNewlines": "去除换行",
+        "removeSpaces": "去除空格",
+        "removeEmptyLines": "去除空行",
+        "addEmptyLines": "添加空行",
+        "convertList": "Office列表粘贴适配",
+        "convertWordFormula": "Word公式转Markdown",
+        "removeSuperscript": "去除上标",
+        "removeLinks": "链接转文字",
+        "autoLink": "链接自动识别",
+        "preserveColors": "保留富文本颜色",
+        "fullWidthToHalfWidth": "全角转半角"
+    },
+    "blockOperations": {
+        "mergeBlocks": "合并块",
+        "splitBlocks": "拆分块",
+        "copyFirstLevel": "仅复制一级列表（带符号）",
+        "copyFirstLevelMarkdown": "仅复制一级列表（markdown）",
+        "copyMultiLevel": "复制到小红书",
+        "convertToMarkdownList": "列表符号转markdown列表",
+        "removeSuperscript": "去除上标",
+        "removeLinks": "链接转文字",
+        "autoLink": "链接自动识别",
+        "removeSpaces": "去除空格",
+        "removeNewlines": "去除换行",
+        "convertChineseToEnglish": "中文符号转英文符号",
+        "adjustImageWidth": "调整图片宽度",
+        "imageWidthDialog": {
+            "title": "调整图片宽度",
+            "placeholder": "输入宽度（像素）",
+            "confirm": "确认",
+            "cancel": "取消"
+        },
+        "adjustImageHeight": "调整图片高度",
+        "imageHeightDialog": {
+            "title": "调整图片高度",
+            "placeholder": "输入高度（像素）",
+            "confirm": "确认",
+            "cancel": "取消"
+        },
+        "setCodeLanguage": "设置代码块语言",
+        "codeLanguageDialog": {
+            "title": "设置代码块语言",
+            "placeholder": "输入语言，如: python",
+            "confirm": "确认",
+            "cancel": "取消"
+        },
+        "convertReference": "块引转超链接",
+        "fullWidthToHalfWidth": "全角转半角"
+    },
+    "messages": {
+        "firstLevelCopied": "已复制内容",
+        "multiLevelCopied": "已复制内容",
+        "clipboardEmpty": "剪贴板为空",
+        "noHeadingFound": "未发现可调整的标题"
+    },
+    "settings": {
+        "copyFirstLevelSymbol": {
+            "title": "仅复制一级列表的无序列表符号设置",
+            "description": "列表符号举例：</br> emoji：✨✅⭐️💡⚡️</br> 符号：☐❖✿ ✦ ◈○◆❀ ■ 🔲"
+        },
+        "copyMultiLevelSymbol": {
+            "title": "复制到小红书的无序列表符号设置",
+            "description": "输入多个符号，会根据层级来使用不同符号</br> 列表符号举例：</br> emoji：✨✅⭐️💡⚡️</br> 符号：☐❖✿ ✦ ◈○◆❀ ■ 🔲"
+        },
+        "copyHeadingSymbol": {
+            "title": "复制到小红书的标题符号设置",
+            "description": "输入多个符号，会根据标题层级来使用不同符号</br> 标题符号举例：</br> emoji：❤️⭐️💡</br> 第一个符号用于h1标题，第二个符号用于h2标题，以此类推"
+        },
+        "inlineLatex": {
+            "title": "公式自动转换是否都转为行内公式",
+            "description": "开启后，所有的公式（包括LaTeX和Markdown）都会转换为行内数学公式"
+        }
+    },
+    "adjustHeading": "调整剪贴板 Markdown 标题级别",
+    "headingLevel": "标题 ${level}"
+}

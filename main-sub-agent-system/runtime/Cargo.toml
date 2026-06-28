@@ -1,0 +1,40 @@
+[package]
+name = "agent-teams-runtime"
+version = "1.3.0"
+edition = "2021"
+
+[[bin]]
+name = "agent-server"
+path = "src/bin/server.rs"
+
+[dependencies]
+agent-teams-core = { path = "../core" }
+agent-teams-provider = { path = "../provider" }
+agent-teams-agents = { path = "../agents" }
+agent-teams-coordinator = { path = "../coordinator" }
+agent-teams-storage = { path = "../storage" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-jaeger = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
+dashmap = { workspace = true }
+async-stream = { workspace = true }
+dotenvy = { workspace = true }
+once_cell = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+include_dir = "0.7"
+mime_guess = "2"

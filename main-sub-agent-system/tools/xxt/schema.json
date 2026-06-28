@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "subcommand": {
+      "type": "string",
+      "enum": ["login", "crawl", "fill", "submit", "screenshot", "check"],
+      "description": "操作类型：login=登录, crawl=爬取题目, fill=填充答案（直接传answers）, submit=提交, screenshot=截图, check=检查填充状态"
+    },
+    "url": {
+      "type": "string",
+      "description": "作业页面URL"
+    },
+    "answers": {
+      "type": "string",
+      "description": "答案JSON，直接传即可无需保存文件。格式: {\"1\":\"C\",\"2\":\"A\",\"3\":\"答案文本\"}"
+    },
+    "answers_file": {
+      "type": "string",
+      "description": "答案文件路径（仅当答案量极大时使用，一般用answers参数即可）"
+    },
+    "output": {
+      "type": "string",
+      "description": "截图保存文件名，仅screenshot命令可选"
+    },
+    "headless": {
+      "type": "boolean",
+      "description": "是否使用无头模式（不显示浏览器窗口），默认false"
+    }
+  },
+  "required": ["subcommand", "url"]
+}

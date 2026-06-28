@@ -1,0 +1,80 @@
+{
+    "addTopBarIcon": "Paste Process",
+    "pasteOptions": {
+        "LaTeXConversion": "LaTeX Conversion",
+        "removeNewlines": "Remove Newlines",
+        "removeSpaces": "Remove Spaces",
+        "removeEmptyLines": "Remove Empty Lines",
+        "addEmptyLines": "Add Empty Lines",
+        "convertList": "Convert Rich Text List",
+        "convertWordFormula": "Convert Word Formula to Markdown",
+        "removeSuperscript": "Remove Superscript",
+        "removeLinks": "Remove Links Keep Text",
+        "autoLink": "Auto Link Recognition",
+        "preserveColors": "Preserve HTML Colors",
+        "fullWidthToHalfWidth": "Full-width to Half-width"
+    },
+    "blockOperations": {
+        "mergeBlocks": "Merge Blocks",
+        "splitBlocks": "Split Blocks",
+        "copyFirstLevel": "Copy First Level List Items",
+        "copyFirstLevelMarkdown": "Copy First Level List Items (Markdown)",
+        "copyMultiLevel": "Copy Multi Level List Items",
+        "convertToMarkdownList": "Convert to Markdown List",
+        "removeSuperscript": "Remove Superscript",
+        "removeLinks": "Remove Links Keep Text",
+        "autoLink": "Auto Link Recognition",
+        "removeSpaces": "Remove Spaces",
+        "removeNewlines": "Remove Newlines",
+        "convertChineseToEnglish": "Convert Chinese Punctuation to English",
+        "adjustImageWidth": "Adjust Image Width",
+        "imageWidthDialog": {
+            "title": "Adjust Image Width",
+            "placeholder": "Enter width (pixels)",
+            "confirm": "Confirm",
+            "cancel": "Cancel"
+        },
+        "adjustImageHeight": "Adjust Image Height",
+        "imageHeightDialog": {
+            "title": "Adjust Image Height",
+            "placeholder": "Enter height (pixels)",
+            "confirm": "Confirm",
+            "cancel": "Cancel"
+        },
+        "setCodeLanguage": "Set Code Language",
+        "codeLanguageDialog": {
+            "title": "Set Code Language",
+            "placeholder": "Enter language (e.g. javascript, python, java)",
+            "confirm": "Confirm",
+            "cancel": "Cancel"
+        },
+        "convertReference": "Convert Block Reference to Link",
+        "fullWidthToHalfWidth": "Full-width to Half-width"
+    },
+    "messages": {
+        "firstLevelCopied": "First level items copied to clipboard",
+        "multiLevelCopied": "Multi level items copied to clipboard",
+        "clipboardEmpty": "Clipboard is empty",
+        "noHeadingFound": "No headings found to adjust"
+    },
+    "settings": {
+        "copyFirstLevelSymbol": {
+            "title": "Symbol for converting list to plain text",
+            "description": "For example:</br> emoji：✨✅⭐️💡⚡️</br> symbol：☐❖✿ ✦ ◈○◆❀ ■ 🔲"
+        },
+        "copyMultiLevelSymbol": {
+            "title": "Symbol for converting list to plain text (multi-level)",
+            "description": "Enter multiple symbols, different symbols will be used according to the level</br> For example:</br> emoji：✨✅⭐️💡⚡️</br> symbol：☐❖✿ ✦ ◈○◆❀ ■ 🔲"
+        },
+        "copyHeadingSymbol": {
+            "title": "Symbols for converting headings to plain text",
+            "description": "Enter multiple symbols, different symbols will be used according to heading level</br> For example:</br> emoji：❤️⭐️💡</br> First symbol for h1, second for h2, and so on"
+        },
+        "inlineLatex": {
+            "title": "Convert to Inline Math",
+            "description": "When enabled, all math formulas (both LaTeX and Markdown) will be converted to inline format"
+        }
+    },
+    "adjustHeading": "Adjust Clipboard Markdown Heading Level",
+    "headingLevel": "Heading ${level}"
+}
