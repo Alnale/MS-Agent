@@ -4,12 +4,12 @@ use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, RedisError};
 use serde_json::Value;
 
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::memory::{
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::memory::{
     CompressionStrategy, MemoryEntry, MemoryKind, MemoryQuery, MemoryRelation, MemoryRelationType,
     MemoryRetrievalResult,
 };
-use agent_teams_core::memory_store::MemoryStore;
+use agent_core::memory_store::MemoryStore;
 
 /// Redis-backed memory store
 pub struct RedisMemoryStore {
@@ -106,38 +106,6 @@ impl RedisMemoryStore {
         serde_json::from_str(json_str).map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))
     }
 
-    fn matches_query(entry: &MemoryEntry, query: &MemoryQuery) -> bool {
-        if !query.kinds.is_empty() && !query.kinds.contains(&entry.kind) {
-            return false;
-        }
-        if let Some(ref sid) = query.session_id {
-            if entry.session_id.as_ref() != Some(sid) {
-                return false;
-            }
-        }
-        if let Some(ref uid) = query.user_id {
-            let entry_user = entry
-                .data
-                .as_ref()
-                .and_then(|d| d.get("user_id"))
-                .and_then(|v| v.as_str());
-            if entry_user != Some(uid.as_str()) {
-                return false;
-            }
-        }
-        if let Some(since) = query.since {
-            if entry.created_at < since {
-                return false;
-            }
-        }
-        if entry.weight < query.min_weight {
-            return false;
-        }
-        if query.confirmed_only && !entry.confirmed {
-            return false;
-        }
-        true
-    }
 }
 
 #[async_trait]
@@ -152,9 +120,37 @@ impl MemoryStore for RedisMemoryStore {
             return Ok(());
         }
         let mut conn = self.conn.clone();
+        let mut pipe = redis::pipe();
+
         for entry in &entries {
-            Self::store_entry_internal(&mut conn, entry).await?;
+            let id = &entry.id;
+            let entry_json = serde_json::to_string(entry).map_err(|e| {
+                AgentTeamsError::StateStoreError(e.to_string())
+            })?;
+            let entry_key = Self::entry_key(id);
+            let score = entry.weight;
+
+            pipe.set(&entry_key, &entry_json).ignore();
+            pipe.zadd(Self::all_entries_key(), id, score as f64).ignore();
+
+            if let Some(ref session_id) = entry.session_id {
+                pipe.zadd(
+                    Self::session_index_key(session_id),
+                    id,
+                    entry.created_at.timestamp() as f64,
+                ).ignore();
+            }
+
+            pipe.zadd(Self::kind_index_key(entry.kind.as_str()), id, score as f64).ignore();
+
+            if let Some(ref hash) = entry.content_hash {
+                pipe.set(Self::hash_index_key(hash), id).ignore();
+            }
         }
+
+        pipe.query_async::<()>(&mut conn).await.map_err(|e| {
+            AgentTeamsError::StateStoreError(e.to_string())
+        })?;
         Ok(())
     }
 
@@ -179,24 +175,28 @@ impl MemoryStore for RedisMemoryStore {
                 .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?
         };
 
-        // Fetch entries and filter
+        // Batch fetch entries using MGET to avoid N+1 queries
         let mut results: Vec<MemoryEntry> = Vec::new();
-        for id in &candidate_ids {
-            let entry_key = Self::entry_key(id);
-            let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
+        let max_candidates = query.limit * 3;
+        let keys: Vec<String> = candidate_ids
+            .iter()
+            .take(max_candidates)
+            .map(|id| Self::entry_key(id))
+            .collect();
 
-            if let Some(json) = json_str {
+        if !keys.is_empty() {
+            let batch_results: Vec<Option<String>> = redis::cmd("MGET")
+                .arg(&keys)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+
+            for json in batch_results.into_iter().flatten() {
                 if let Ok(entry) = Self::entry_from_json(&json) {
-                    if Self::matches_query(&entry, &query) {
+                    if entry.matches_query(&query) {
                         results.push(entry);
                     }
                 }
-            }
-
-            if results.len() >= query.limit * 3 {
-                break; // Fetch enough for post-filtering
             }
         }
 
@@ -232,51 +232,58 @@ impl MemoryStore for RedisMemoryStore {
     async fn touch(&self, id: &str) -> Result<()> {
         let mut conn = self.conn.clone();
         let entry_key = Self::entry_key(id);
-        let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-            AgentTeamsError::StateStoreError(e.to_string())
-        })?;
-
-        if let Some(json) = json_str {
-            let mut entry = Self::entry_from_json(&json)?;
-            entry.last_accessed_at = Utc::now();
-            entry.access_count += 1;
-
-            let updated_json = serde_json::to_string(&entry).map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-            let _: () = conn.set(&entry_key, &updated_json).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-        }
+        // Use Lua script for atomic read-modify-write to prevent lost updates
+        let script = redis::Script::new(r"
+            local json = redis.call('GET', KEYS[1])
+            if not json then return 0 end
+            local entry = cjson.decode(json)
+            entry['last_accessed_at'] = ARGV[1]
+            entry['access_count'] = (entry['access_count'] or 0) + 1
+            local updated = cjson.encode(entry)
+            redis.call('SET', KEYS[1], updated)
+            return 1
+        ");
+        let now = Utc::now().to_rfc3339();
+        let _: i32 = script
+            .key(&entry_key)
+            .arg(&now)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
         Ok(())
     }
 
     async fn promote(&self, id: &str, delta: f32) -> Result<()> {
         let mut conn = self.conn.clone();
         let entry_key = Self::entry_key(id);
-        let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-            AgentTeamsError::StateStoreError(e.to_string())
-        })?;
+        // Atomic read-modify-write via Lua script
+        let script = redis::Script::new(r"
+            local json = redis.call('GET', KEYS[1])
+            if not json then return 0 end
+            local entry = cjson.decode(json)
+            entry['weight'] = math.min(1.0, (entry['weight'] or 0) + tonumber(ARGV[1]))
+            local updated = cjson.encode(entry)
+            redis.call('SET', KEYS[1], updated)
+            return cjson.encode({weight = entry['weight'], session_id = entry['session_id'], kind = entry['kind']})
+        ");
+        let result: String = script
+            .key(&entry_key)
+            .arg(delta)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
 
-        if let Some(json) = json_str {
-            let mut entry = Self::entry_from_json(&json)?;
-            entry.weight = (entry.weight + delta).min(1.0);
-
-            let updated_json = serde_json::to_string(&entry).map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
+        // Update sorted set scores
+        if let Ok(info) = serde_json::from_str::<serde_json::Value>(&result) {
+            let new_weight = info["weight"].as_f64().unwrap_or(0.0);
             let mut pipe = redis::pipe();
-            pipe.set(&entry_key, &updated_json).ignore();
-            // Update weight in indexes
-            if let Some(ref sid) = entry.session_id {
-                pipe.zadd(Self::session_index_key(sid), id, entry.weight as f64)
-                    .ignore();
+            if let Some(sid) = info["session_id"].as_str() {
+                pipe.zadd(Self::session_index_key(sid), id, new_weight).ignore();
             }
-            pipe.zadd(Self::all_entries_key(), id, entry.weight as f64)
-                .ignore();
-            pipe.zadd(Self::kind_index_key(entry.kind.as_str()), id, entry.weight as f64)
-                .ignore();
-
+            pipe.zadd(Self::all_entries_key(), id, new_weight).ignore();
+            if let Some(kind) = info["kind"].as_str() {
+                pipe.zadd(Self::kind_index_key(kind), id, new_weight).ignore();
+            }
             pipe.query_async::<()>(&mut conn).await.map_err(|e| {
                 AgentTeamsError::StateStoreError(e.to_string())
             })?;
@@ -291,28 +298,43 @@ impl MemoryStore for RedisMemoryStore {
             .await
             .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
 
-        let mut count = 0;
-        for id in &all_ids {
-            let entry_key = Self::entry_key(id);
-            let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
+        if all_ids.is_empty() {
+            return Ok(0);
+        }
 
-            if let Some(json) = json_str {
-                if let Ok(mut entry) = Self::entry_from_json(&json) {
+        // Batch fetch all entries via MGET
+        let keys: Vec<String> = all_ids.iter().map(|id| Self::entry_key(id)).collect();
+        let batch_results: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(&keys)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+
+        // Process results and batch updates via pipeline
+        let mut pipe = redis::pipe();
+        let mut count = 0;
+
+        for (id, json_opt) in all_ids.iter().zip(batch_results.iter()) {
+            if let Some(json) = json_opt {
+                if let Ok(mut entry) = Self::entry_from_json(json) {
                     if entry.last_accessed_at < before {
                         entry.weight *= decay_factor;
                         let updated_json = serde_json::to_string(&entry).map_err(|e| {
                             AgentTeamsError::StateStoreError(e.to_string())
                         })?;
-                        let _: () = conn.set(&entry_key, &updated_json).await.map_err(|e| {
-                            AgentTeamsError::StateStoreError(e.to_string())
-                        })?;
+                        pipe.set(Self::entry_key(id), &updated_json).ignore();
                         count += 1;
                     }
                 }
             }
         }
+
+        if count > 0 {
+            pipe.query_async::<()>(&mut conn).await.map_err(|e| {
+                AgentTeamsError::StateStoreError(e.to_string())
+            })?;
+        }
+
         Ok(count)
     }
 
@@ -323,18 +345,27 @@ impl MemoryStore for RedisMemoryStore {
             .await
             .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
 
-        let mut count = 0;
-        for id in &all_ids {
-            let entry_key = Self::entry_key(id);
-            let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
+        if all_ids.is_empty() {
+            return Ok(0);
+        }
 
-            if let Some(json) = json_str {
-                if let Ok(entry) = Self::entry_from_json(&json) {
+        // Batch fetch all entries via MGET
+        let keys: Vec<String> = all_ids.iter().map(|id| Self::entry_key(id)).collect();
+        let batch_results: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(&keys)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+
+        // Build a single pipeline for all deletions
+        let mut pipe = redis::pipe();
+        let mut count = 0;
+
+        for (id, json_opt) in all_ids.iter().zip(batch_results.iter()) {
+            if let Some(json) = json_opt {
+                if let Ok(entry) = Self::entry_from_json(json) {
                     if entry.weight < min_weight && entry.created_at < before {
-                        // Remove from all indexes
-                        let mut pipe = redis::pipe();
+                        let entry_key = Self::entry_key(id);
                         pipe.del(&entry_key).ignore();
                         pipe.zrem(Self::all_entries_key(), id).ignore();
                         if let Some(ref sid) = entry.session_id {
@@ -345,14 +376,18 @@ impl MemoryStore for RedisMemoryStore {
                         if let Some(ref hash) = entry.content_hash {
                             pipe.del(Self::hash_index_key(hash)).ignore();
                         }
-                        pipe.query_async::<()>(&mut conn).await.map_err(|e| {
-                            AgentTeamsError::StateStoreError(e.to_string())
-                        })?;
                         count += 1;
                     }
                 }
             }
         }
+
+        if count > 0 {
+            pipe.query_async::<()>(&mut conn).await.map_err(|e| {
+                AgentTeamsError::StateStoreError(e.to_string())
+            })?;
+        }
+
         Ok(count)
     }
 
@@ -385,12 +420,16 @@ impl MemoryStore for RedisMemoryStore {
             .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
 
         let mut entries = Vec::new();
-        for id in &ids {
-            let entry_key = Self::entry_key(id);
-            let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-            if let Some(json) = json_str {
+        if !ids.is_empty() {
+            // Batch fetch all entries via MGET to avoid N+1 queries
+            let keys: Vec<String> = ids.iter().map(|id| Self::entry_key(id)).collect();
+            let batch_results: Vec<Option<String>> = redis::cmd("MGET")
+                .arg(&keys)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+
+            for json in batch_results.into_iter().flatten() {
                 if let Ok(entry) = Self::entry_from_json(&json) {
                     entries.push(entry);
                 }
@@ -443,35 +482,33 @@ impl MemoryStore for RedisMemoryStore {
     async fn delete(&self, id: &str) -> Result<bool> {
         let mut conn = self.conn.clone();
         let entry_key = Self::entry_key(id);
-        let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-            AgentTeamsError::StateStoreError(e.to_string())
-        })?;
-
-        if let Some(json) = json_str {
-            if let Ok(entry) = Self::entry_from_json(&json) {
-                let mut pipe = redis::pipe();
-                pipe.del(&entry_key).ignore();
-                pipe.zrem(Self::all_entries_key(), id).ignore();
-                if let Some(ref sid) = entry.session_id {
-                    pipe.zrem(Self::session_index_key(sid), id).ignore();
-                }
-                pipe.zrem(Self::kind_index_key(entry.kind.as_str()), id)
-                    .ignore();
-                if let Some(ref hash) = entry.content_hash {
-                    pipe.del(Self::hash_index_key(hash)).ignore();
-                }
-                // Remove relations
-                let rel_key = Self::relations_key(id);
-                pipe.del(&rel_key).ignore();
-
-                pipe.query_async::<()>(&mut conn).await.map_err(|e| {
-                    AgentTeamsError::StateStoreError(e.to_string())
-                })?;
-            }
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        // Atomic read-metadata + delete via Lua script
+        let script = redis::Script::new(r"
+            local json = redis.call('GET', KEYS[1])
+            if not json then return 0 end
+            local entry = cjson.decode(json)
+            redis.call('DEL', KEYS[1])
+            redis.call('ZREM', KEYS[2], ARGV[1])
+            if entry['session_id'] and entry['session_id'] ~= '' then
+                redis.call('ZREM', 'mem:session:' .. entry['session_id'], ARGV[1])
+            end
+            if entry['kind'] and entry['kind'] ~= '' then
+                redis.call('ZREM', 'mem:kind:' .. entry['kind'], ARGV[1])
+            end
+            if entry['content_hash'] and entry['content_hash'] ~= '' then
+                redis.call('DEL', 'mem:hash:' .. entry['content_hash'])
+            end
+            redis.call('DEL', 'mem:rel:' .. ARGV[1])
+            return 1
+        ");
+        let deleted: i32 = script
+            .key(&entry_key)
+            .key(Self::all_entries_key())
+            .arg(id)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+        Ok(deleted == 1)
     }
 
     async fn add_relation(&self, relation: MemoryRelation) -> Result<()> {
@@ -552,23 +589,25 @@ impl MemoryStore for RedisMemoryStore {
     async fn update_quality(&self, id: &str, quality: f32, source: &str) -> Result<()> {
         let mut conn = self.conn.clone();
         let entry_key = Self::entry_key(id);
-        let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-            AgentTeamsError::StateStoreError(e.to_string())
-        })?;
-
-        if let Some(json) = json_str {
-            let mut entry = Self::entry_from_json(&json)?;
-            entry.confidence = quality;
-            entry.weight = (entry.weight * (1.0 + quality) / 2.0).min(1.0);
-            entry.source_agent = source.to_string();
-
-            let updated_json = serde_json::to_string(&entry).map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-            let _: () = conn.set(&entry_key, &updated_json).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-        }
+        // Atomic read-modify-write via Lua script
+        let script = redis::Script::new(r"
+            local json = redis.call('GET', KEYS[1])
+            if not json then return 0 end
+            local entry = cjson.decode(json)
+            entry['confidence'] = tonumber(ARGV[1])
+            entry['weight'] = math.min(1.0, (entry['weight'] or 0) * (1.0 + tonumber(ARGV[1])) / 2.0)
+            entry['source_agent'] = ARGV[2]
+            local updated = cjson.encode(entry)
+            redis.call('SET', KEYS[1], updated)
+            return 1
+        ");
+        let _: i32 = script
+            .key(&entry_key)
+            .arg(quality)
+            .arg(source)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
         Ok(())
     }
 
@@ -587,43 +626,61 @@ impl MemoryStore for RedisMemoryStore {
 
         let mut contradicted_ids = Vec::new();
 
-        for id in &ids {
+        if ids.is_empty() {
+            return Ok(contradicted_ids);
+        }
+
+        // Batch fetch all entries via MGET to avoid N+1 queries
+        let keys: Vec<String> = ids.iter().map(|id| Self::entry_key(id)).collect();
+        let batch_results: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(&keys)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
+
+        // Collect contradicted entries and their updates
+        let mut updates: Vec<(String, String, MemoryEntry)> = Vec::new(); // (id, entry_key, updated)
+        for (id, json_opt) in ids.iter().zip(batch_results.iter()) {
             if *id == entry.id {
                 continue;
             }
-            let entry_key = Self::entry_key(id);
-            let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-
-            if let Some(json) = json_str {
-                if let Ok(existing) = Self::entry_from_json(&json) {
+            if let Some(json) = json_opt {
+                if let Ok(existing) = Self::entry_from_json(json) {
                     if existing.content != entry.content {
-                        // Lower weight of contradicted entry
                         let mut updated = existing.clone();
                         updated.weight = (updated.weight * 0.7).max(0.1);
-                        let updated_json = serde_json::to_string(&updated).map_err(|e| {
-                            AgentTeamsError::StateStoreError(e.to_string())
-                        })?;
-                        let _: () =
-                            conn.set(&entry_key, &updated_json).await.map_err(|e| {
-                                AgentTeamsError::StateStoreError(e.to_string())
-                            })?;
-
-                        // Record contradiction relation
-                        let _ = self
-                            .add_relation(MemoryRelation {
-                                source_id: entry.id.clone(),
-                                target_id: id.clone(),
-                                relation_type: MemoryRelationType::Contradicts,
-                                strength: 0.8,
-                                created_at: Utc::now(),
-                            })
-                            .await;
-
+                        updates.push((id.clone(), Self::entry_key(id), updated));
                         contradicted_ids.push(id.clone());
                     }
                 }
+            }
+        }
+
+        // Batch write weight updates via pipeline and record contradiction relations
+        if !updates.is_empty() {
+            let mut pipe = redis::pipe();
+            for (_, entry_key, ref updated) in &updates {
+                let updated_json = serde_json::to_string(updated).map_err(|e| {
+                    AgentTeamsError::StateStoreError(e.to_string())
+                })?;
+                pipe.set(entry_key, &updated_json).ignore();
+            }
+            pipe.query_async::<()>(&mut conn).await.map_err(|e| {
+                AgentTeamsError::StateStoreError(e.to_string())
+            })?;
+
+            // Record contradiction relations (these require cross-key coordination,
+            // so we use the existing add_relation which handles its own pipeline)
+            for (id, _, _) in &updates {
+                let _ = self
+                    .add_relation(MemoryRelation {
+                        source_id: entry.id.clone(),
+                        target_id: id.clone(),
+                        relation_type: MemoryRelationType::Contradicts,
+                        strength: 0.8,
+                        created_at: Utc::now(),
+                    })
+                    .await;
             }
         }
 
@@ -677,14 +734,45 @@ impl MemoryStore for RedisMemoryStore {
 
         let count = all_ids.len();
 
-        // Delete all entry keys and indexes
+        // Collect all index keys that need cleanup
+        let mut session_keys: Vec<String> = Vec::new();
+        let mut kind_keys: Vec<String> = Vec::new();
+        let mut hash_keys: Vec<String> = Vec::new();
+
+        for id in &all_ids {
+            let entry_key = Self::entry_key(id);
+            if let Ok(Some(json)) = conn.get::<_, Option<String>>(&entry_key).await {
+                if let Ok(entry) = Self::entry_from_json(&json) {
+                    if let Some(ref sid) = entry.session_id {
+                        session_keys.push(Self::session_index_key(sid));
+                    }
+                    kind_keys.push(Self::kind_index_key(entry.kind.as_str()));
+                    if let Some(ref hash) = entry.content_hash {
+                        hash_keys.push(Self::hash_index_key(hash));
+                    }
+                }
+            }
+        }
+
+        // Delete all entry keys, indexes, and the global sorted set
         let mut pipe = redis::pipe();
         for id in &all_ids {
             pipe.del(Self::entry_key(id)).ignore();
         }
         pipe.del(Self::all_entries_key()).ignore();
-        // We can't enumerate all session/kind index keys easily,
-        // but entries are gone so they'll be empty
+        for key in &session_keys {
+            pipe.del(key).ignore();
+        }
+        for key in &kind_keys {
+            pipe.del(key).ignore();
+        }
+        for key in &hash_keys {
+            pipe.del(key).ignore();
+        }
+        // Also clean up relation keys
+        for id in &all_ids {
+            pipe.del(Self::relations_key(id)).ignore();
+        }
         pipe.query_async::<()>(&mut conn).await.map_err(|e| {
             AgentTeamsError::StateStoreError(e.to_string())
         })?;
@@ -695,20 +783,21 @@ impl MemoryStore for RedisMemoryStore {
     async fn archive(&self, id: &str) -> Result<()> {
         let mut conn = self.conn.clone();
         let entry_key = Self::entry_key(id);
-        let json_str: Option<String> = conn.get(&entry_key).await.map_err(|e| {
-            AgentTeamsError::StateStoreError(e.to_string())
-        })?;
-
-        if let Some(json) = json_str {
-            let mut entry = Self::entry_from_json(&json)?;
-            entry.archived = true;
-            let updated_json = serde_json::to_string(&entry).map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-            let _: () = conn.set(&entry_key, &updated_json).await.map_err(|e| {
-                AgentTeamsError::StateStoreError(e.to_string())
-            })?;
-        }
+        // Atomic set-archived via Lua script
+        let script = redis::Script::new(r"
+            local json = redis.call('GET', KEYS[1])
+            if not json then return 0 end
+            local entry = cjson.decode(json)
+            entry['archived'] = true
+            local updated = cjson.encode(entry)
+            redis.call('SET', KEYS[1], updated)
+            return 1
+        ");
+        let _: i32 = script
+            .key(&entry_key)
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
         Ok(())
     }
 }

@@ -48,7 +48,20 @@ pub enum ToolChoice {
     Required { name: String },
 }
 
+/// Response format for structured output
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseFormat {
+    /// Format type: "text", "json_object", "json_schema"
+    pub format_type: String,
+    /// Name for json_schema format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// JSON schema for json_schema format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
@@ -56,12 +69,18 @@ pub struct CompletionRequest {
     pub temperature: Option<f32>,
     pub system: Option<String>,
     pub stream: bool,
+    /// Plain string input for Responses API (alternative to messages array).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
     /// Structured tool definitions (replaces raw Value)
     pub tools: Option<Vec<Tool>>,
     /// Force specific tool usage (auto / none / named)
     pub tool_choice: Option<ToolChoice>,
     pub metadata: Option<Value>,
     pub thinking: Option<ThinkingConfig>,
+    /// Response format for structured output (e.g., json_object).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -77,6 +96,9 @@ pub struct ChatMessage {
     pub role: String,
     pub content: String,
     pub cache_control: Option<Value>,
+    /// Image URLs for multimodal input (user messages with images).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
     /// Tool call ID for tool result messages
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -92,6 +114,7 @@ impl ChatMessage {
             role: role.into(),
             content: content.into(),
             cache_control: None,
+            images: None,
             tool_call_id: None,
             tool_calls: None,
         }
@@ -108,6 +131,9 @@ pub struct CompletionResponse {
     /// Tool calls requested by the LLM
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    /// Annotations from the LLM response (e.g., web search citations)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -115,6 +141,12 @@ pub struct TokenUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cached_tokens: u32,
+    /// Tokens consumed by reasoning/thinking process.
+    #[serde(default)]
+    pub reasoning_tokens: u32,
+    /// Total tokens (input + output).
+    #[serde(default)]
+    pub total_tokens: u32,
 }
 
 /// Summary of a SubAgent's result for frontend display
@@ -143,7 +175,7 @@ pub enum AgentProgress {
     SynthesisStarted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompletionChunk {
     pub delta: String,
     pub thinking_delta: Option<String>,
@@ -164,6 +196,9 @@ pub struct CompletionChunk {
     /// Companion emotional state (emitted when companion mode is active)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub companion_state: Option<crate::companion::CompanionState>,
+    /// Annotations from the LLM response (e.g., web search citations)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

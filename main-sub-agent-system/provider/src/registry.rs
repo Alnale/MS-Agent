@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use std::sync::{Arc, RwLock};
 
-use agent_teams_core::provider::LlmProvider;
+use agent_core::provider::LlmProvider;
 
 /// Registry for LLM providers
 pub struct ProviderRegistry {

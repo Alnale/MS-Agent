@@ -1,4 +1,4 @@
-use agent_teams_core::boxed_agent::AgentOutput;
+use agent_core::boxed_agent::AgentOutput;
 
 /// Synthesizer: combines results from multiple agents
 pub struct Synthesizer;

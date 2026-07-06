@@ -1,16 +1,16 @@
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use lru::LruCache;
 
-use agent_teams_core::boxed_agent::AgentOutput;
+use agent_core::boxed_agent::AgentOutput;
 
 /// Default TTL for response cache entries (120 seconds)
 pub const DEFAULT_RESPONSE_CACHE_TTL_SECS: u64 = 120;
 
 struct CachedEntry {
-    output: AgentOutput,
+    output: Arc<AgentOutput>,
     inserted_at: Instant,
     ttl_secs: u64,
 }
@@ -34,11 +34,11 @@ impl ResponseCache {
         }
     }
 
-    pub async fn get(&self, key: &str) -> Option<AgentOutput> {
+    pub async fn get(&self, key: &str) -> Option<Arc<AgentOutput>> {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = cache.get(key) {
             if entry.inserted_at.elapsed().as_secs() < entry.ttl_secs {
-                return Some(entry.output.clone());
+                return Some(Arc::clone(&entry.output));
             }
             // Expired — remove it
             cache.pop(key);
@@ -49,7 +49,7 @@ impl ResponseCache {
     pub async fn put(&self, key: String, response: AgentOutput) {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         cache.put(key, CachedEntry {
-            output: response,
+            output: Arc::new(response),
             inserted_at: Instant::now(),
             ttl_secs: self.default_ttl_secs,
         });
@@ -90,7 +90,7 @@ mod tests {
 
         let cached = cache.get("key1").await;
         assert!(cached.is_some());
-        assert_eq!(cached.unwrap().content, "test");
+        assert_eq!(cached.unwrap().content.as_str(), "test");
     }
 
     #[tokio::test]

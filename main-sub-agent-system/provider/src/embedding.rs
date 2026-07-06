@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use agent_teams_core::memory_store::{EmbeddingError, EmbeddingProvider};
+use agent_core::memory_store::{EmbeddingError, EmbeddingProvider};
 
 /// OpenAI-compatible embedding provider
 pub struct OpenAIEmbeddingProvider {

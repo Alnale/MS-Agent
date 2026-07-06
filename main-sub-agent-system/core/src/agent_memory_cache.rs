@@ -1,6 +1,7 @@
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use dashmap::DashMap;
 use lru::LruCache;
@@ -54,12 +55,12 @@ impl CacheStats {
 /// - L3 (global): Backing MemoryStore for cache misses
 pub struct AgentMemoryCache {
     agent_id: String,
-    /// L1: Hot cache (session-scoped, lock-free)
-    hot_cache: DashMap<String, MemoryEntry>,
+    /// L1: Hot cache (session-scoped, lock-free) — Arc-wrapped for cheap cloning
+    hot_cache: DashMap<String, Arc<MemoryEntry>>,
     /// L1 max capacity (0 = unlimited)
     hot_max_size: usize,
-    /// L2: Warm cache (cross-session, LRU) — Arc-wrapped for Clone support
-    warm_cache: Arc<Mutex<LruCache<String, MemoryEntry>>>,
+    /// L2: Warm cache (cross-session, LRU) — Arc-wrapped for Clone support; entries are Arc for cheap tier clones
+    warm_cache: Arc<Mutex<LruCache<String, Arc<MemoryEntry>>>>,
     /// L3: Shared cache (cross-agent, read-through)
     shared_cache: Option<Arc<SharedMemoryCache>>,
     /// L4: Global store fallback
@@ -69,7 +70,7 @@ pub struct AgentMemoryCache {
     /// Statistics
     stats: Arc<CacheStats>,
     /// Dirty entries that need syncing to global store
-    dirty: DashMap<String, MemoryEntry>,
+    dirty: DashMap<String, Arc<MemoryEntry>>,
     /// Event bus for publishing memory change events (optional)
     event_bus: Option<Arc<MemoryEventBus>>,
 }
@@ -181,27 +182,29 @@ impl AgentMemoryCache {
         let l1_results = self.query_l1(query);
         if !l1_results.is_empty() {
             self.stats.hot_hits.fetch_add(1, Ordering::Relaxed);
-            return l1_results;
+            return l1_results.into_iter().map(|e| (*e).clone()).collect();
         }
 
         // L2: Warm cache (cross-session, LRU)
         if let Some(l2_results) = self.query_l2(query).await {
             self.stats.warm_hits.fetch_add(1, Ordering::Relaxed);
-            // Backfill L1
+            // Backfill L1 — cheap Arc clone instead of deep MemoryEntry clone
             for entry in &l2_results {
-                self.hot_cache.insert(entry.id.clone(), entry.clone());
+                self.hot_cache.insert(entry.id.clone(), Arc::clone(entry));
             }
-            return l2_results;
+            return l2_results.into_iter().map(|e| (*e).clone()).collect();
         }
 
         // L3: Shared cache (cross-agent)
         if let Some(ref shared) = self.shared_cache {
             if let Some(l3_results) = shared.query(query).await {
-                // Backfill L1 and L2
+                // Backfill L1 and L2 — wrap in Arc for cheap tier clones
                 for entry in &l3_results {
-                    self.hot_cache.insert(entry.id.clone(), entry.clone());
-                    let mut warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
-                    warm.put(entry.id.clone(), entry.clone());
+                    let arc_entry = Arc::new(entry.clone());
+                    let id = arc_entry.id.clone();
+                    self.hot_cache.insert(id.clone(), Arc::clone(&arc_entry));
+                    let mut warm = self.warm_cache.lock().await;
+                    warm.put(id, Arc::clone(&arc_entry));
                 }
                 return l3_results;
             }
@@ -211,31 +214,31 @@ impl AgentMemoryCache {
         self.query_global(query).await
     }
 
-    fn query_l1(&self, query: &MemoryQuery) -> Vec<MemoryEntry> {
+    fn query_l1(&self, query: &MemoryQuery) -> Vec<Arc<MemoryEntry>> {
         if let Some(ref sid) = query.session_id {
             self.hot_cache
                 .iter()
                 .filter(|e| {
                     e.value().session_id.as_ref() == Some(sid)
-                        && Self::matches_query(e.value(), query)
+                        && e.value().matches_query(query)
                 })
-                .map(|e| e.value().clone())
+                .map(|e| Arc::clone(e.value()))
                 .collect()
         } else {
             self.hot_cache
                 .iter()
-                .filter(|e| Self::matches_query(e.value(), query))
-                .map(|e| e.value().clone())
+                .filter(|e| e.value().matches_query(query))
+                .map(|e| Arc::clone(e.value()))
                 .collect()
         }
     }
 
-    async fn query_l2(&self, query: &MemoryQuery) -> Option<Vec<MemoryEntry>> {
-        let warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
-        let results: Vec<MemoryEntry> = warm
+    async fn query_l2(&self, query: &MemoryQuery) -> Option<Vec<Arc<MemoryEntry>>> {
+        let warm = self.warm_cache.lock().await;
+        let results: Vec<Arc<MemoryEntry>> = warm
             .iter()
-            .filter(|(_, entry)| Self::matches_query(entry, query))
-            .map(|(_, entry)| entry.clone())
+            .filter(|(_, entry)| entry.matches_query(query))
+            .map(|(_, entry)| Arc::clone(entry))
             .collect();
         if results.is_empty() {
             None
@@ -249,12 +252,14 @@ impl AgentMemoryCache {
         if let Some(ref store) = self.global_store {
             match store.retrieve(query.clone()).await {
                 Ok(retrieval) => {
-                    // Backfill all layers — acquire warm lock once
+                    // Backfill all layers — wrap in Arc for cheap tier clones
                     {
-                        let mut warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut warm = self.warm_cache.lock().await;
                         for entry in &retrieval.entries {
-                            self.hot_cache.insert(entry.id.clone(), entry.clone());
-                            warm.put(entry.id.clone(), entry.clone());
+                            let arc_entry = Arc::new(entry.clone());
+                            let id = arc_entry.id.clone();
+                            self.hot_cache.insert(id.clone(), Arc::clone(&arc_entry));
+                            warm.put(id, Arc::clone(&arc_entry));
                         }
                     }
                     if let Some(ref shared) = self.shared_cache {
@@ -278,20 +283,24 @@ impl AgentMemoryCache {
         }
     }
 
-    /// Store memory (write-through: L1 -> L2 -> async L3)
+    /// Store memory (write-through: L1 -> L2 -> async L3).
+    /// Wraps the entry in Arc once, then uses cheap Arc::clone for each cache tier.
     pub async fn store(&self, entry: MemoryEntry) {
+        let entry = Arc::new(entry);
+        let id = entry.id.clone();
+
         // Write L1
-        self.hot_cache.insert(entry.id.clone(), entry.clone());
+        self.hot_cache.insert(id.clone(), Arc::clone(&entry));
         self.evict_hot_if_needed();
 
         // Write L2
         {
-            let mut warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
-            warm.put(entry.id.clone(), entry.clone());
+            let mut warm = self.warm_cache.lock().await;
+            warm.put(id.clone(), Arc::clone(&entry));
         }
 
         // Mark dirty for async global sync
-        self.dirty.insert(entry.id.clone(), entry.clone());
+        self.dirty.insert(id.clone(), Arc::clone(&entry));
 
         // Publish memory change event
         if let Some(ref bus) = self.event_bus {
@@ -304,14 +313,14 @@ impl AgentMemoryCache {
             });
         }
 
-        // Async write to L3
-        self.flush_to_global(entry).await;
+        // Async write to L3 — extract MemoryEntry for the store trait boundary
+        self.flush_to_global((*entry).clone()).await;
     }
 
     /// Batch flush all dirty entries to global store
     pub async fn flush_all(&self) -> Result<usize> {
         let dirty_entries: Vec<MemoryEntry> =
-            self.dirty.iter().map(|e| e.value().clone()).collect();
+            self.dirty.iter().map(|e| (**e.value()).clone()).collect();
 
         let count = dirty_entries.len();
 
@@ -346,6 +355,7 @@ impl AgentMemoryCache {
     /// Preload memories into hot cache (for session initialization)
     pub async fn preload(&self, entries: Vec<MemoryEntry>) {
         for entry in entries {
+            let entry = Arc::new(entry);
             self.hot_cache.insert(entry.id.clone(), entry);
         }
     }
@@ -363,7 +373,7 @@ impl AgentMemoryCache {
         });
 
         // L2 warm cache
-        let mut warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut warm = self.warm_cache.lock().await;
         let to_remove: Vec<String> = warm
             .iter()
             .filter(|(_, entry)| entry.session_id.as_deref() == Some(session_id))
@@ -392,7 +402,7 @@ impl AgentMemoryCache {
 
         // L2 warm cache: evict entries not accessed in 24h
         let warm_threshold = chrono::Duration::hours(24);
-        let mut warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut warm = self.warm_cache.lock().await;
         let to_remove: Vec<String> = warm
             .iter()
             .filter(|(_, entry)| entry.last_accessed_at + warm_threshold <= now)
@@ -417,7 +427,7 @@ impl AgentMemoryCache {
 
         // Check L2
         {
-            let warm = self.warm_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let warm = self.warm_cache.lock().await;
             if let Some(existing) = warm.peek(&entry.id) {
                 if existing.version > entry.version {
                     return Err(crate::error::AgentTeamsError::StateVersionConflict {
@@ -453,26 +463,6 @@ impl AgentMemoryCache {
         }
     }
 
-    fn matches_query(entry: &MemoryEntry, query: &MemoryQuery) -> bool {
-        if !query.kinds.is_empty() && !query.kinds.contains(&entry.kind) {
-            return false;
-        }
-        if !query.tags.is_empty() && !query.tags.iter().any(|t| entry.tags.contains(t)) {
-            return false;
-        }
-        if entry.weight < query.min_weight {
-            return false;
-        }
-        if let Some(ref sid) = query.session_id {
-            if entry.session_id.as_ref() != Some(sid) {
-                return false;
-            }
-        }
-        if query.confirmed_only && !entry.confirmed {
-            return false;
-        }
-        true
-    }
 }
 
 /// Execution policy for controlling SubAgent invocation behavior

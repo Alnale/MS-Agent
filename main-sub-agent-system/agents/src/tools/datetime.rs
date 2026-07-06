@@ -5,10 +5,10 @@
 use async_trait::async_trait;
 use chrono::{Datelike, FixedOffset, TimeZone, Timelike};
 
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 /// 北京时间固定偏移 UTC+8
 fn beijing_offset() -> FixedOffset {
@@ -57,7 +57,6 @@ impl ToolExecutor for DateTimeTool {
                     "  parse — 解析自然语言时间（如 '明天下午3点'、'下周二'，需 text 参数）\n\n",
                     "工具联动：\n",
                     "- 获取的时间可用 file(write) 保存到文件\n",
-                    "- 可用于为 http_request 的请求添加时间参数\n",
                     "- 可用于记录 xxt 操作的时间戳",
                 ))
                 .executor("datetime")
@@ -170,10 +169,10 @@ impl DateTimeTool {
     fn execute_diff(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let from = call.arguments["from_time"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
         let to = call.arguments["to_time"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("to_time参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("to_time参数不能为空".to_string()))?;
 
         match (
             chrono::DateTime::parse_from_rfc3339(from),
@@ -194,7 +193,7 @@ impl DateTimeTool {
                     "human_readable": format_duration(diff),
                 }))
             }
-            _ => Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            _ => Err(agent_core::error::AgentTeamsError::NotFound(
                 "时间格式无效，请使用ISO 8601格式：2024-01-01T00:00:00Z".to_string(),
             )),
         }
@@ -203,7 +202,7 @@ impl DateTimeTool {
     fn execute_format(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let time_str = call.arguments["from_time"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
         let format = call.arguments["format"].as_str().unwrap_or("%Y-%m-%d %H:%M:%S");
 
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(time_str) {
@@ -217,7 +216,7 @@ impl DateTimeTool {
         } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S") {
             let beijing = beijing_offset().from_local_datetime(&naive)
                 .single()
-                .ok_or_else(|| agent_teams_core::error::AgentTeamsError::Internal(
+                .ok_or_else(|| agent_core::error::AgentTeamsError::Internal(
                     format!("无法确定时间 '{}' 的时区映射", time_str)
                 ))?;
             Ok(serde_json::json!({
@@ -227,7 +226,7 @@ impl DateTimeTool {
                 "format": format,
             }))
         } else {
-            Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            Err(agent_core::error::AgentTeamsError::NotFound(
                 "无法解析时间，请使用ISO 8601格式".to_string(),
             ))
         }
@@ -236,7 +235,7 @@ impl DateTimeTool {
     fn execute_from_unix(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let ts = call.arguments["timestamp"]
             .as_i64()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("timestamp参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("timestamp参数不能为空".to_string()))?;
 
         match chrono::DateTime::from_timestamp(ts, 0) {
             Some(utc) => {
@@ -249,14 +248,14 @@ impl DateTimeTool {
                     "weekday": now_weekday_chinese(&beijing),
                 }))
             }
-            None => Err(agent_teams_core::error::AgentTeamsError::NotFound("无效的时间戳".to_string())),
+            None => Err(agent_core::error::AgentTeamsError::NotFound("无效的时间戳".to_string())),
         }
     }
 
     fn execute_to_unix(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let time_str = call.arguments["time"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("time参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("time参数不能为空".to_string()))?;
 
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(time_str) {
             Ok(serde_json::json!({
@@ -267,7 +266,7 @@ impl DateTimeTool {
         } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S") {
             let beijing = beijing_offset().from_local_datetime(&naive)
                 .single()
-                .ok_or_else(|| agent_teams_core::error::AgentTeamsError::Internal(
+                .ok_or_else(|| agent_core::error::AgentTeamsError::Internal(
                     format!("无法确定时间 '{}' 的时区映射", time_str)
                 ))?;
             Ok(serde_json::json!({
@@ -277,7 +276,7 @@ impl DateTimeTool {
                 "assumed_timezone": "Asia/Shanghai (UTC+8)",
             }))
         } else {
-            Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            Err(agent_core::error::AgentTeamsError::NotFound(
                 "无法解析时间，支持格式：ISO 8601 或 '2024-01-01 12:00:00'（北京时间）".to_string(),
             ))
         }
@@ -286,15 +285,22 @@ impl DateTimeTool {
     fn execute_convert(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let time_str = call.arguments["from_time"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("from_time参数不能为空".to_string()))?;
         let timezone = call.arguments["timezone"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("timezone参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("timezone参数不能为空".to_string()))?;
 
-        let dt = chrono::DateTime::parse_from_rfc3339(time_str)
-            .or_else(|_| chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S")
-                .map(|naive| beijing_offset().from_local_datetime(&naive).single().unwrap().fixed_offset()))
-            .map_err(|_| agent_teams_core::error::AgentTeamsError::NotFound("无法解析时间".to_string()))?;
+        let dt = match chrono::DateTime::parse_from_rfc3339(time_str) {
+            Ok(dt) => dt,
+            Err(_) => {
+                let naive = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S")
+                    .map_err(|_| agent_core::error::AgentTeamsError::NotFound("无法解析时间".to_string()))?;
+                beijing_offset().from_local_datetime(&naive)
+                    .single()
+                    .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound(format!("时间 '{}' 存在歧义", time_str)))?
+                    .fixed_offset()
+            }
+        };
 
         // Map common timezone names to offsets
         let offset_seconds = match timezone.to_lowercase().as_str() {
@@ -320,12 +326,12 @@ impl DateTimeTool {
                         let minutes: i32 = parts[1].parse().unwrap_or(0);
                         sign * (hours * 3600 + minutes * 60)
                     } else {
-                        return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                        return Err(agent_core::error::AgentTeamsError::NotFound(
                             format!("不支持的时区: {}，请使用标准时区名称或 +/-HH:MM 格式", timezone)
                         ));
                     }
                 } else {
-                    return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                    return Err(agent_core::error::AgentTeamsError::NotFound(
                         format!("不支持的时区: {}，请使用 UTC、Asia/Tokyo 等标准名称", timezone)
                     ));
                 }
@@ -333,7 +339,7 @@ impl DateTimeTool {
         };
 
         let target_offset = chrono::FixedOffset::east_opt(offset_seconds)
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("无效时区偏移".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("无效时区偏移".to_string()))?;
         let converted = dt.with_timezone(&target_offset);
 
         Ok(serde_json::json!({
@@ -349,7 +355,7 @@ impl DateTimeTool {
     fn execute_parse(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let text = call.arguments["text"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("text参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("text参数不能为空".to_string()))?;
 
         let now = now_beijing();
         let lower = text.to_lowercase();
@@ -381,7 +387,7 @@ impl DateTimeTool {
             let hours: i64 = lower.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(1);
             now + chrono::Duration::hours(hours)
         } else {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("无法解析时间描述: '{}'，支持：明天/后天/昨天/下周/上周/N小时后/N分钟前", text)
             ));
         };

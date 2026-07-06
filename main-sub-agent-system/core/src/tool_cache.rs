@@ -1,7 +1,6 @@
 //! Tool Result Cache
 //!
-//! Caches results from expensive tool calls (web_search, http_request, etc.)
-//! to avoid redundant network requests and API calls.
+//! Caches results from expensive tool calls to avoid redundant API calls.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -27,15 +26,7 @@ pub struct ToolCacheConfig {
 
 impl Default for ToolCacheConfig {
     fn default() -> Self {
-        let mut tool_ttl_overrides = std::collections::HashMap::new();
-        // Search results: cache for 10 minutes (relatively stable)
-        tool_ttl_overrides.insert("web_search".to_string(), 600);
-        // HTTP GET: cache for 5 minutes
-        tool_ttl_overrides.insert("http_get".to_string(), 300);
-        // HTTP request: cache for 5 minutes
-        tool_ttl_overrides.insert("http_request".to_string(), 300);
-        // HTTP POST: cache for 2 minutes (may have side effects)
-        tool_ttl_overrides.insert("http_post".to_string(), 120);
+        let tool_ttl_overrides = std::collections::HashMap::new();
 
         Self {
             default_ttl_secs: 120, // 2 minutes default
@@ -237,17 +228,19 @@ mod tests {
     fn test_cache_hit() {
         let cache = ToolResultCache::new(ToolCacheConfig::default());
 
+        // "search" is not in excluded_tools (which excludes xxt/file/datetime
+        // as side-effectful tools), so it is cacheable.
         let call = ToolCall {
             id: "test1".to_string(),
-            name: "web_search".to_string(),
-            arguments: json!({"query": "test query"}),
+            name: "search".to_string(),
+            arguments: json!({"query": "rust async"}),
         };
 
         let result = ToolResult {
             call_id: "test1".to_string(),
-            name: "web_search".to_string(),
+            name: "search".to_string(),
             success: true,
-            output: json!({"results": ["a", "b"]}),
+            output: json!({"content": "hello world"}),
             error: None,
             execution_duration_ms: 100,
         };
@@ -261,7 +254,7 @@ mod tests {
         // Hit on second call
         let cached = cache.get(&call);
         assert!(cached.is_some());
-        assert_eq!(cached.unwrap().output, json!({"results": ["a", "b"]}));
+        assert_eq!(cached.unwrap().output, json!({"content": "hello world"}));
     }
 
     #[test]
@@ -296,13 +289,13 @@ mod tests {
 
         let call = ToolCall {
             id: "test3".to_string(),
-            name: "http_get".to_string(),
-            arguments: json!({"url": "https://example.com"}),
+            name: "file".to_string(),
+            arguments: json!({"action": "read", "path": "/tmp/test.txt"}),
         };
 
         let result = ToolResult {
             call_id: "test3".to_string(),
-            name: "http_get".to_string(),
+            name: "file".to_string(),
             success: true,
             output: json!({"body": "hello"}),
             error: None,

@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
-use agent_teams_core::agent_memory_cache::AgentMemoryCache;
-use agent_teams_core::boxed_agent::BoxedAgent;
-use agent_teams_core::provider::LlmProvider;
-use agent_teams_core::sub_agent::SubAgentDescriptor;
-use agent_teams_core::tool::UnifiedToolRegistry;
+use agent_core::agent_memory_cache::AgentMemoryCache;
+use agent_core::boxed_agent::BoxedAgent;
+use agent_core::provider::LlmProvider;
+use agent_core::sub_agent::SubAgentDescriptor;
+use agent_core::tool::UnifiedToolRegistry;
 
 use crate::sub_agents::*;
 use crate::sub_agents::sentiment::SentimentSubAgent;
 use crate::sub_agents::task_planner::TaskPlannerAgent;
 use crate::tool_engine::ToolExecutionEngine;
-use crate::tools::HttpToolExecutor;
 
 /// Trait for agent plugins that can be registered declaratively
 pub trait AgentPlugin: Send + Sync {
@@ -123,7 +122,7 @@ impl AgentPlugin for SentimentPlugin {
     fn descriptor(&self) -> SubAgentDescriptor {
         SubAgentDescriptor {
             id: "sentiment".to_string(),
-            capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+            capabilities: agent_core::boxed_agent::AgentCapabilities {
                 message_types: vec!["sentiment_analysis".to_string(), "user_input".to_string()],
                 requires_llm: true,
                 supports_streaming: false,
@@ -155,7 +154,7 @@ impl AgentPlugin for TaskPlannerPlugin {
     fn descriptor(&self) -> SubAgentDescriptor {
         SubAgentDescriptor {
             id: "task_planner".to_string(),
-            capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+            capabilities: agent_core::boxed_agent::AgentCapabilities {
                 message_types: vec![
                     "routing_decision".to_string(),
                     "task_planning".to_string(),
@@ -187,7 +186,7 @@ impl AgentPlugin for TaskPlannerPlugin {
         if let Some(ref tool_reg) = tool_registry {
             let engine = Arc::new(ToolExecutionEngine::new(tool_reg.clone()));
             agent = agent.with_unified_registry(tool_reg.clone());
-            agent = agent.with_tool_executor(Arc::new(HttpToolExecutor::new()));
+
             agent = agent.with_tool_engine(engine);
             agent = agent.with_param_inferrer(Arc::new(
                 crate::tool_param_infer::ParameterInferrer::new(provider),
@@ -201,7 +200,7 @@ impl AgentPlugin for TaskPlannerPlugin {
         if let Some(ref tool_reg) = tool_registry {
             let engine = Arc::new(ToolExecutionEngine::new(tool_reg.clone()));
             agent = agent.with_unified_registry(tool_reg.clone());
-            agent = agent.with_tool_executor(Arc::new(HttpToolExecutor::new()));
+
             agent = agent.with_tool_engine(engine);
             agent = agent.with_param_inferrer(Arc::new(
                 crate::tool_param_infer::ParameterInferrer::new(provider),
@@ -217,7 +216,7 @@ impl AgentPlugin for SummaryPlugin {
     fn descriptor(&self) -> SubAgentDescriptor {
         SubAgentDescriptor {
             id: "summary".to_string(),
-            capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+            capabilities: agent_core::boxed_agent::AgentCapabilities {
                 message_types: vec!["conversation_summary".to_string()],
                 requires_llm: true,
                 supports_streaming: false,
@@ -281,7 +280,7 @@ impl AgentFactory {
                 if let Some(ref tool_reg) = self.tool_registry {
                     let engine = Arc::new(ToolExecutionEngine::new(tool_reg.clone()));
                     agent = agent.with_unified_registry(tool_reg.clone());
-                    agent = agent.with_tool_executor(Arc::new(HttpToolExecutor::new()));
+        
                     agent = agent.with_tool_engine(engine);
                     agent = agent.with_param_inferrer(Arc::new(
                         crate::tool_param_infer::ParameterInferrer::new(self.provider.clone()),
@@ -303,7 +302,7 @@ impl AgentFactory {
         vec![
             SubAgentDescriptor {
                 id: "sentiment".to_string(),
-                capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+                capabilities: agent_core::boxed_agent::AgentCapabilities {
                     message_types: vec!["sentiment_analysis".to_string(), "user_input".to_string()],
                     requires_llm: true, supports_streaming: false, priority: 70,
                 },
@@ -313,7 +312,7 @@ impl AgentFactory {
             },
             SubAgentDescriptor {
                 id: "task_planner".to_string(),
-                capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+                capabilities: agent_core::boxed_agent::AgentCapabilities {
                     message_types: vec!["routing_decision".to_string(), "task_planning".to_string(), "user_input".to_string(), "tool_request".to_string(), "tool_planning".to_string(), "tool_execution".to_string(), "file_operation".to_string(), "web_request".to_string(), "browser_automation".to_string()],
                     requires_llm: true, supports_streaming: false, priority: 110,
                 },
@@ -323,7 +322,7 @@ impl AgentFactory {
             },
             SubAgentDescriptor {
                 id: "summary".to_string(),
-                capabilities: agent_teams_core::boxed_agent::AgentCapabilities {
+                capabilities: agent_core::boxed_agent::AgentCapabilities {
                     message_types: vec!["conversation_summary".to_string()],
                     requires_llm: true, supports_streaming: false, priority: 50,
                 },
@@ -363,7 +362,7 @@ impl ConfigDrivenAgentRegistry {
 
     pub async fn register_from_config(
         &mut self,
-        registry: &agent_teams_core::registry::AgentRegistry,
+        registry: &agent_core::registry::AgentRegistry,
         config: &serde_json::Value,
     ) -> Vec<String> {
         let mut registered = Vec::new();

@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   plugins: [react()],
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: [
       { find: '@liquid-glass/shader-utils', replacement: path.resolve(__dirname, 'liquid-glass-react-master/src/shader-utils.ts') },
       { find: '@liquid-glass/utils', replacement: path.resolve(__dirname, 'liquid-glass-react-master/src/utils.ts') },
@@ -15,15 +16,17 @@ export default defineConfig({
     ],
   },
   build: {
+    target: 'es2020',
     rollupOptions: {
       output: {
         manualChunks(id: string) {
           if (id.includes('node_modules/mermaid')) return 'mermaid';
           if (id.includes('node_modules/katex')) return 'katex';
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) return 'vendor-react';
         },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 500,
   },
   server: {
     port: 5173,

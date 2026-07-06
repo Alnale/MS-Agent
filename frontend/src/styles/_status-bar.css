@@ -1,0 +1,584 @@
+/* ===== Status Bar ===== */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background:
+    /* Caustic light spots — simulates light refracting through curved glass */
+    radial-gradient(ellipse 80% 120% at 20% 50%, rgba(242, 128, 160, 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 100% at 75% 50%, rgba(184, 169, 232, 0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 80% at 50% 50%, rgba(141, 216, 176, 0.03) 0%, transparent 50%),
+    /* Edge highlight — top-left light catch */
+    linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, transparent 35%),
+    /* Shimmer sweep */
+    linear-gradient(90deg, transparent 30%, rgba(255, 255, 255, 0.25) 50%, transparent 70%),
+    /* Base frosted glass */
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(253, 248, 245, 0.82) 100%);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 200% 100%, 100% 100%;
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom: 1px solid rgba(242, 128, 160, 0.12);
+  box-shadow:
+    inset 0 -1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  animation: glass-shimmer 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  /* Reappear: strict reverse of focus-out dissolve */
+  transition: backdrop-filter 0.35s cubic-bezier(0, 0, 0.6, 1) 0.08s,
+              background 0.3s cubic-bezier(0, 0, 0.6, 1) 0.07s,
+              border-color 0.25s cubic-bezier(0, 0, 0.6, 1) 0.04s,
+              box-shadow 0.3s cubic-bezier(0, 0, 0.6, 1) 0.06s;
+}
+
+/* Edge highlight sweep — diagonal light catching on glass surface */
+.status-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.12) 45%, rgba(255, 255, 255, 0.06) 55%, transparent 70%);
+  background-size: 250% 100%;
+  animation: glass-edge-sweep 10s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+  /* Reappear: strict reverse of focus-out dissolve */
+  transition: opacity 0.25s cubic-bezier(0, 0, 0.6, 1);
+}
+
+@keyframes glass-edge-sweep {
+  0%, 100% { background-position: 200% 0; }
+  50% { background-position: -50% 0; }
+}
+
+/* Focus: glass and accent fade out completely */
+.status-bar.focused,
+.status-bar.hide-glass {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+  animation: none;
+  transition: backdrop-filter 0.35s cubic-bezier(0.4, 0, 1, 1),
+              background 0.3s cubic-bezier(0.4, 0, 1, 1) 0.05s,
+              border-color 0.25s cubic-bezier(0.4, 0, 1, 1) 0.08s,
+              box-shadow 0.3s cubic-bezier(0.4, 0, 1, 1) 0.06s;
+}
+
+/* hide-glass: only visual changes, keep layout intact */
+
+.status-bar.focused::after,
+.status-bar.hide-glass::after {
+  opacity: 0;
+  animation: none;
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 1, 1) 0.12s;
+}
+
+.status-center-info {
+  display: contents;
+  /* Reappear: strict reverse of focus-out dissolve */
+  transition: opacity 0.25s cubic-bezier(0, 0, 0.6, 1) 0.12s;
+}
+
+.status-bar.focused .status-center-info {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* hide-glass: keep center info visible & clickable, just dim it */
+.status-bar.hide-glass .status-center-info {
+  opacity: 0.35;
+  pointer-events: auto;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.status-bar.hide-glass .status-center-info:hover {
+  opacity: 0.7;
+}
+/* When preset panel is open, restore full visibility */
+.status-bar.hide-glass .status-center-info.preset-open {
+  opacity: 1;
+}
+
+/* Glass shimmer sweep — highlight moves across */
+@keyframes glass-shimmer {
+  0% { background-position: -200% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.status-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 1;
+}
+
+.status-title {
+  font-weight: 800;
+  font-size: 18px;
+  background: linear-gradient(135deg, var(--pink), var(--lavender));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
+}
+
+.status-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.model-badge-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  /* Outer glow — capsule floats above surface */
+  filter: drop-shadow(0 1px 6px rgba(184, 169, 232, 0.14))
+          drop-shadow(0 0 2px rgba(242, 128, 160, 0.08));
+  transition: opacity 0.25s ease;
+}
+
+.model-badge-wrap.hidden {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  filter: none;
+}
+/* Boosted outer glow when preset panel is open */
+.preset-open .model-badge-wrap {
+  filter: drop-shadow(0 1px 8px rgba(184, 169, 232, 0.25))
+          drop-shadow(0 0 4px rgba(242, 128, 160, 0.15));
+}
+
+/* ── Floating particles ── */
+.model-particles {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.model-particles > i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  opacity: 0;
+  animation: particle-float linear infinite;
+}
+.model-particles > i:nth-child(1) {
+  width: 2px; height: 2px;
+  background: rgba(242, 128, 160, 0.5);
+  left: 12%; top: 60%;
+  animation-duration: 4.2s; animation-delay: 0s;
+}
+.model-particles > i:nth-child(2) {
+  width: 1.5px; height: 1.5px;
+  background: rgba(184, 169, 232, 0.6);
+  left: 35%; top: 70%;
+  animation-duration: 3.6s; animation-delay: 0.8s;
+}
+.model-particles > i:nth-child(3) {
+  width: 2.5px; height: 2.5px;
+  background: rgba(141, 216, 176, 0.45);
+  left: 55%; top: 65%;
+  animation-duration: 5s; animation-delay: 1.5s;
+}
+.model-particles > i:nth-child(4) {
+  width: 1.5px; height: 1.5px;
+  background: rgba(242, 128, 160, 0.4);
+  left: 72%; top: 75%;
+  animation-duration: 3.8s; animation-delay: 2.2s;
+}
+.model-particles > i:nth-child(5) {
+  width: 2px; height: 2px;
+  background: rgba(184, 169, 232, 0.5);
+  left: 85%; top: 55%;
+  animation-duration: 4.6s; animation-delay: 0.4s;
+}
+.model-particles > i:nth-child(6) {
+  width: 1px; height: 1px;
+  background: rgba(255, 255, 255, 0.6);
+  left: 25%; top: 50%;
+  animation-duration: 3.2s; animation-delay: 1.8s;
+}
+/* ── Extra particles (7-12) ── */
+.model-particles > i:nth-child(7) {
+  width: 1.5px; height: 1.5px;
+  background: rgba(242, 128, 160, 0.35);
+  left: 8%; top: 80%;
+  animation: particle-drift-left linear infinite;
+  animation-duration: 4.8s; animation-delay: 0.6s;
+}
+.model-particles > i:nth-child(8) {
+  width: 2px; height: 2px;
+  background: rgba(184, 169, 232, 0.4);
+  left: 45%; top: 85%;
+  animation: particle-spiral linear infinite;
+  animation-duration: 5.5s; animation-delay: 1.2s;
+}
+.model-particles > i:nth-child(9) {
+  width: 1px; height: 1px;
+  background: rgba(141, 216, 176, 0.5);
+  left: 62%; top: 50%;
+  animation: particle-drift-right linear infinite;
+  animation-duration: 3.4s; animation-delay: 2.5s;
+}
+.model-particles > i:nth-child(10) {
+  width: 2.5px; height: 2.5px;
+  background: rgba(255, 255, 255, 0.3);
+  left: 90%; top: 70%;
+  animation: particle-float linear infinite;
+  animation-duration: 4s; animation-delay: 0.3s;
+}
+.model-particles > i:nth-child(11) {
+  width: 1px; height: 1px;
+  background: rgba(242, 128, 160, 0.5);
+  left: 30%; top: 55%;
+  animation: particle-drift-left linear infinite;
+  animation-duration: 3.8s; animation-delay: 3s;
+}
+.model-particles > i:nth-child(12) {
+  width: 1.5px; height: 1.5px;
+  background: rgba(184, 169, 232, 0.45);
+  left: 78%; top: 60%;
+  animation: particle-spiral linear infinite;
+  animation-duration: 6s; animation-delay: 1.8s;
+}
+
+/* ── Particle keyframes ── */
+@keyframes particle-float {
+  0%   { transform: translateY(0) scale(1);     opacity: 0; }
+  15%  { opacity: 0.7; }
+  50%  { transform: translateY(-8px) scale(0.8); opacity: 0.4; }
+  85%  { opacity: 0; }
+  100% { transform: translateY(-14px) scale(0.5); opacity: 0; }
+}
+@keyframes particle-drift-left {
+  0%   { transform: translate(0, 0) scale(1);       opacity: 0; }
+  10%  { opacity: 0.6; }
+  40%  { transform: translate(-4px, -6px) scale(0.9); opacity: 0.5; }
+  70%  { transform: translate(-8px, -12px) scale(0.6); opacity: 0.2; }
+  100% { transform: translate(-10px, -16px) scale(0.3); opacity: 0; }
+}
+@keyframes particle-drift-right {
+  0%   { transform: translate(0, 0) scale(1);       opacity: 0; }
+  10%  { opacity: 0.65; }
+  40%  { transform: translate(5px, -5px) scale(0.85); opacity: 0.45; }
+  70%  { transform: translate(10px, -11px) scale(0.5); opacity: 0.15; }
+  100% { transform: translate(12px, -16px) scale(0.2); opacity: 0; }
+}
+@keyframes particle-spiral {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1);     opacity: 0; }
+  10%  { opacity: 0.55; }
+  25%  { transform: translate(3px, -4px) rotate(90deg) scale(0.9);  opacity: 0.5; }
+  50%  { transform: translate(-2px, -9px) rotate(180deg) scale(0.7); opacity: 0.35; }
+  75%  { transform: translate(2px, -13px) rotate(270deg) scale(0.5); opacity: 0.15; }
+  100% { transform: translate(0, -16px) rotate(360deg) scale(0.3);  opacity: 0; }
+}
+
+/* ── Particle burst when preset panel opens ── */
+.model-particles.burst > i {
+  animation-duration: 1.8s !important;
+  animation-delay: 0s !important;
+}
+.model-particles.burst > i:nth-child(1)  { animation-name: particle-burst-1 !important; }
+.model-particles.burst > i:nth-child(2)  { animation-name: particle-burst-2 !important; }
+.model-particles.burst > i:nth-child(3)  { animation-name: particle-burst-3 !important; }
+.model-particles.burst > i:nth-child(4)  { animation-name: particle-burst-4 !important; }
+.model-particles.burst > i:nth-child(5)  { animation-name: particle-burst-2 !important; animation-delay: 0.1s !important; }
+.model-particles.burst > i:nth-child(6)  { animation-name: particle-burst-1 !important; animation-delay: 0.15s !important; }
+.model-particles.burst > i:nth-child(7)  { animation-name: particle-burst-3 !important; animation-delay: 0.05s !important; }
+.model-particles.burst > i:nth-child(8)  { animation-name: particle-burst-4 !important; animation-delay: 0.12s !important; }
+.model-particles.burst > i:nth-child(9)  { animation-name: particle-burst-1 !important; animation-delay: 0.08s !important; }
+.model-particles.burst > i:nth-child(10) { animation-name: particle-burst-2 !important; animation-delay: 0.2s !important; }
+.model-particles.burst > i:nth-child(11) { animation-name: particle-burst-3 !important; animation-delay: 0.18s !important; }
+.model-particles.burst > i:nth-child(12) { animation-name: particle-burst-4 !important; animation-delay: 0.06s !important; }
+
+@keyframes particle-burst-1 {
+  0%   { transform: translate(0, 0) scale(0.3); opacity: 0; }
+  12%  { opacity: 0.9; transform: translate(-2px, -3px) scale(1.2); }
+  50%  { transform: translate(-8px, -14px) scale(0.8); opacity: 0.5; }
+  100% { transform: translate(-12px, -22px) scale(0.2); opacity: 0; }
+}
+@keyframes particle-burst-2 {
+  0%   { transform: translate(0, 0) scale(0.3); opacity: 0; }
+  12%  { opacity: 0.85; transform: translate(3px, -2px) scale(1.15); }
+  50%  { transform: translate(6px, -12px) scale(0.7); opacity: 0.45; }
+  100% { transform: translate(10px, -20px) scale(0.15); opacity: 0; }
+}
+@keyframes particle-burst-3 {
+  0%   { transform: translate(0, 0) scale(0.3); opacity: 0; }
+  12%  { opacity: 0.8; transform: translate(-4px, -4px) scale(1.3); }
+  50%  { transform: translate(-6px, -10px) rotate(90deg) scale(0.6); opacity: 0.4; }
+  100% { transform: translate(-4px, -18px) rotate(180deg) scale(0.1); opacity: 0; }
+}
+@keyframes particle-burst-4 {
+  0%   { transform: translate(0, 0) scale(0.3); opacity: 0; }
+  12%  { opacity: 0.9; transform: translate(1px, -5px) scale(1.25); }
+  50%  { transform: translate(3px, -13px) rotate(-60deg) scale(0.75); opacity: 0.5; }
+  100% { transform: translate(5px, -22px) rotate(-120deg) scale(0.2); opacity: 0; }
+}
+
+/* ── Shimmer glow behind model badge ── */
+.model-shimmer {
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(242, 128, 160, 0.08) 20%,
+    rgba(184, 169, 232, 0.12) 40%,
+    rgba(141, 216, 176, 0.08) 60%,
+    rgba(242, 128, 160, 0.06) 80%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 4s ease-in-out infinite;
+  opacity: 0.7;
+  filter: blur(3px);
+}
+@keyframes shimmer-sweep {
+  0%   { background-position: 100% 0; }
+  50%  { background-position: -100% 0; }
+  100% { background-position: 100% 0; }
+}
+/* Boosted shimmer when preset panel is open */
+.preset-open .model-shimmer {
+  opacity: 0.9;
+  animation-duration: 3s;
+}
+
+/* ── Liquid glass capsule ── */
+.model-badge {
+  position: relative;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  padding: 5px 16px 5px 14px;
+  border-radius: var(--radius-pill);
+  font-family: 'SF Pro Display', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  font-style: italic;
+  text-transform: lowercase;
+  overflow: hidden;
+  /* Glass layers: caustic light → tinted body → depth vignette */
+  background:
+    /* Depth vignette — dark edges from capsule curvature */
+    radial-gradient(ellipse 120% 100% at 50% 50%,
+      transparent 40%,
+      rgba(100, 80, 140, 0.06) 80%,
+      rgba(60, 40, 90, 0.10) 100%
+    ),
+    /* Liquid tint — colored gel fill */
+    radial-gradient(ellipse 80% 60% at 40% 30%,
+      rgba(242, 128, 160, 0.06) 0%, transparent 60%
+    ),
+    radial-gradient(ellipse 60% 80% at 70% 70%,
+      rgba(141, 216, 176, 0.05) 0%, transparent 55%
+    ),
+    /* Glass body — top-lit, bottom-shadowed */
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.24) 0%,
+      rgba(255, 255, 255, 0.10) 35%,
+      rgba(184, 169, 232, 0.06) 65%,
+      rgba(120, 100, 160, 0.08) 100%
+    );
+  backdrop-filter: blur(20px) saturate(1.8) brightness(1.04);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8) brightness(1.04);
+  /* Glass edge — thin refractive rim */
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  border-bottom-color: rgba(255, 255, 255, 0.15);
+  /* Glass depth + inner meniscus */
+  box-shadow:
+    /* Outer ambient glow */
+    0 0 10px rgba(184, 169, 232, 0.08),
+    0 0 3px rgba(242, 128, 160, 0.05),
+    /* Drop shadow */
+    0 2px 5px rgba(0, 0, 0, 0.05),
+    /* Inner top meniscus — liquid surface catching light */
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    /* Inner bottom — subtle depth */
+    inset 0 -1px 0 rgba(80, 60, 120, 0.06);
+  /* Text */
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-image: linear-gradient(135deg,
+    var(--pink) 0%,
+    var(--lavender) 45%,
+    var(--mint) 100%
+  );
+  transition: all 0.3s ease;
+}
+
+.model-badge::before,
+.model-badge::after {
+  display: none;
+}
+
+.model-badge:hover {
+  border-color: rgba(255, 255, 255, 0.38);
+  box-shadow:
+    0 0 14px rgba(184, 169, 232, 0.12),
+    0 0 4px rgba(242, 128, 160, 0.08),
+    0 3px 8px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.60),
+    inset 0 -1px 0 rgba(80, 60, 120, 0.06);
+}
+
+/* ── Preset panel open: subtle glass boost ── */
+.preset-open .model-badge {
+  backdrop-filter: blur(24px) saturate(2) brightness(1.06);
+  -webkit-backdrop-filter: blur(24px) saturate(2) brightness(1.06);
+  border-color: rgba(255, 255, 255, 0.38);
+}
+
+/* ── Disconnected state: gray out model badge and surrounding UI ── */
+.status-center-info.disconnected .status-title {
+  opacity: 0.4;
+}
+.status-center-info.disconnected .model-badge-wrap {
+  filter: none;
+}
+.model-badge-wrap:has(.model-badge.disconnected) .model-particles,
+.model-badge-wrap:has(.model-badge.disconnected) .model-shimmer {
+  display: none;
+}
+.model-badge.disconnected {
+  background:
+    linear-gradient(135deg,
+      rgba(255, 255, 255, 0.04) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+  backdrop-filter: blur(8px) saturate(0.6) brightness(0.7);
+  -webkit-backdrop-filter: blur(8px) saturate(0.6) brightness(0.7);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.1);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.3);
+  background-clip: unset;
+  -webkit-background-clip: unset;
+  background-image: none;
+  font-style: normal;
+  text-transform: none;
+}
+.model-badge.disconnected::before,
+.model-badge.disconnected::after {
+  display: none;
+}
+
+
+/* Status bar preset anchor — wraps model name + preset panel */
+.status-preset-anchor {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.status-center-btn {
+  display: contents;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  color: inherit;
+  padding: 0;
+}
+
+.status-center-btn:disabled {
+  cursor: default;
+}
+
+/* Hide PresetSelector trigger when inside status bar wrapper */
+.status-preset-panel-wrap .preset-selector {
+  position: static;
+}
+
+.status-preset-panel-wrap .preset-selector-trigger {
+  display: none;
+}
+
+/* Reposition panel: drop down from status bar instead of floating up */
+.status-preset-panel-wrap .preset-selector-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: 0;
+  z-index: 1100;
+}
+
+.btn-clear {
+  background:
+    linear-gradient(135deg, rgba(242, 128, 160, 0.12) 0%, rgba(184, 169, 232, 0.12) 100%);
+  color: var(--pink);
+  border: 1.5px solid rgba(242, 128, 160, 0.18);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-sans);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 4px rgba(242, 128, 160, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  animation: mode-btn-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  letter-spacing: 0.3px;
+}
+.btn-clear:hover {
+  background:
+    linear-gradient(135deg, rgba(242, 128, 160, 0.22) 0%, rgba(184, 169, 232, 0.18) 100%);
+  border-color: rgba(242, 128, 160, 0.3);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 4px 12px rgba(242, 128, 160, 0.12);
+  color: var(--lavender);
+}
+.btn-clear svg {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.btn-clear:hover svg {
+  transform: scale(1.1) rotate(90deg);
+}
+.btn-clear:active {
+  animation: mode-btn-press 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover {
+  background: var(--pink-soft);
+  color: var(--pink);
+}
+
+.btn-icon.muted {
+  color: var(--pink);
+  opacity: 0.7;
+}
+

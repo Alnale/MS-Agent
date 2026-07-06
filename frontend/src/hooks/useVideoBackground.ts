@@ -7,24 +7,6 @@ export function useVideoBackground() {
   });
   const [videoPlaying, setVideoPlaying] = useState(false);
 
-  // Ensure video plays/pauses based on videoPlaying state
-  const setupVideoPlayEffect = useCallback((showSplash: boolean, bgVideo: string | null) => {
-    if (showSplash) return;
-    const el = videoRef.current;
-    if (!el || !bgVideo) return;
-    if (!videoPlaying) {
-      el.pause();
-      return;
-    }
-    const tryPlay = () => { el.play().catch(() => {}); };
-    if (el.readyState >= 3) {
-      tryPlay();
-    } else {
-      el.addEventListener('canplay', tryPlay, { once: true });
-      return () => el.removeEventListener('canplay', tryPlay);
-    }
-  }, [videoPlaying]);
-
   // Persist muted state
   useEffect(() => {
     localStorage.setItem('agent-teams-video-muted', String(videoMuted));
@@ -57,7 +39,6 @@ export function useVideoBackground() {
     videoPlaying,
     setVideoPlaying,
     autoplayUnlockedRef,
-    setupVideoPlayEffect,
     setupAutoplayUnlock,
   };
 }

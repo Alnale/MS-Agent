@@ -86,7 +86,8 @@ export function PresetList({
       items.push(
         <div key={preset.id} role="button" tabIndex={0}
           className={`preset-panel-item custom${activePresetId === preset.id ? ' selected' : ''}${focusIndex === idx ? ' focused' : ''}`}
-          onClick={() => onSelect(preset.id)} onMouseEnter={() => onFocus(idx)}>
+          onClick={() => onSelect(preset.id)} onMouseEnter={() => onFocus(idx)}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(preset.id); } }}>
           <span className="preset-item-icon">{preset.icon}</span>
           <span className="preset-item-info">
             <span className="preset-item-name">{preset.name}</span>

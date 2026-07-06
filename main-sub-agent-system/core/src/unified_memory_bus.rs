@@ -26,6 +26,8 @@ pub struct SharedMemoryCache {
     source_agents: DashMap<String, String>,
     /// Default TTL in seconds
     default_ttl_secs: u64,
+    /// Counter for throttling opportunistic eviction
+    write_count: AtomicU64,
 }
 
 impl SharedMemoryCache {
@@ -39,6 +41,7 @@ impl SharedMemoryCache {
             cache: RwLock::new(LruCache::new(cap)),
             source_agents: DashMap::new(),
             default_ttl_secs,
+            write_count: AtomicU64::new(0),
         }
     }
 
@@ -51,7 +54,7 @@ impl SharedMemoryCache {
 
         let results: Vec<MemoryEntry> = cache
             .iter()
-            .filter(|(_, meta)| meta.expires_at > now && Self::matches_query(&meta.entry, query))
+            .filter(|(_, meta)| meta.expires_at > now && meta.entry.matches_query(query))
             .map(|(_, meta)| meta.entry.clone())
             .collect();
         if results.is_empty() {
@@ -67,30 +70,34 @@ impl SharedMemoryCache {
     }
 
     /// Insert an entry with explicit TTL (seconds). None = use default.
-    /// Also evicts expired entries opportunistically on writes.
+    /// Evicts expired entries opportunistically every 50 writes to avoid O(n) scan on every put.
     pub async fn put_with_ttl(&self, entry: MemoryEntry, ttl_secs: Option<u64>) {
         let ttl = ttl_secs.unwrap_or(self.default_ttl_secs);
         let now = chrono::Utc::now();
+        let id = entry.id.clone();
+        let source_agent = entry.source_agent.clone();
         let meta = CacheEntryMeta {
             expires_at: now + chrono::Duration::seconds(ttl as i64),
-            entry: entry.clone(),
+            entry,
         };
         let mut cache = self.cache.write().await;
 
-        // Opportunistic eviction of expired entries on writes
-        let expired: Vec<String> = cache
-            .iter()
-            .filter(|(_, m)| m.expires_at <= now)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for key in expired {
-            cache.pop(&key);
-            self.source_agents.remove(&key);
+        // Throttled opportunistic eviction: every 50 writes
+        let count = self.write_count.fetch_add(1, Ordering::Relaxed);
+        if count.is_multiple_of(50) {
+            let expired: Vec<String> = cache
+                .iter()
+                .filter(|(_, m)| m.expires_at <= now)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for key in expired {
+                cache.pop(&key);
+                self.source_agents.remove(&key);
+            }
         }
 
-        self.source_agents
-            .insert(entry.id.clone(), entry.source_agent.clone());
-        cache.put(entry.id, meta);
+        self.source_agents.insert(id.clone(), source_agent);
+        cache.put(id, meta);
     }
 
     /// Invalidate entries from a specific agent
@@ -152,27 +159,6 @@ impl SharedMemoryCache {
         self.source_agents.clear();
     }
 
-    fn matches_query(entry: &MemoryEntry, query: &MemoryQuery) -> bool {
-        if !query.kinds.is_empty() && !query.kinds.contains(&entry.kind) {
-            return false;
-        }
-        if !query.tags.is_empty() && !query.tags.iter().any(|t| entry.tags.contains(t)) {
-            return false;
-        }
-        if entry.weight < query.min_weight {
-            return false;
-        }
-        // Session isolation: if query specifies session_id, only return entries for that session
-        if let Some(ref sid) = query.session_id {
-            if entry.session_id.as_ref() != Some(sid) {
-                return false;
-            }
-        }
-        if query.confirmed_only && !entry.confirmed {
-            return false;
-        }
-        true
-    }
 }
 
 /// Cache system monitoring metrics

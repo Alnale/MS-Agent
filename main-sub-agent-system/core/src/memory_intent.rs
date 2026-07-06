@@ -35,22 +35,25 @@ impl IntentRecognizer {
                 Regex::new(
                     r"(?i)(昨天|上次|之前|以前|earlier|yesterday|last time|before|历史|说了什么)",
                 )
-                .unwrap(),
+                .expect("invalid historical recall regex"),
                 QueryIntent::HistoricalRecall,
             ),
             // Preference query patterns
             (
-                Regex::new(r"(?i)(喜欢|偏好|prefer|favorite|爱好|习惯|口味|风格)").unwrap(),
+                Regex::new(r"(?i)(喜欢|偏好|prefer|favorite|爱好|习惯|口味|风格)")
+                    .expect("invalid preference query regex"),
                 QueryIntent::PreferenceQuery,
             ),
             // Task continuation patterns
             (
-                Regex::new(r"(?i)(继续|接着|刚才|continue|resume|go on|下一步)").unwrap(),
+                Regex::new(r"(?i)(继续|接着|刚才|continue|resume|go on|下一步)")
+                    .expect("invalid task continuation regex"),
                 QueryIntent::TaskContinuation,
             ),
             // Fact verification patterns
             (
-                Regex::new(r"(?i)(是不是|对不对|确认|verify|confirm|不是说|应该)").unwrap(),
+                Regex::new(r"(?i)(是不是|对不对|确认|verify|confirm|不是说|应该)")
+                    .expect("invalid fact verification regex"),
                 QueryIntent::FactVerification,
             ),
         ];
@@ -97,16 +100,11 @@ impl IntentRecognizer {
             .to_string();
 
         let request = crate::provider::CompletionRequest {
-            model: String::new(),
             messages: vec![crate::provider::ChatMessage::simple("user", query)],
             max_tokens: Some(1024),
             temperature: Some(0.0),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         let resp = llm.complete(request).await.map_err(|e| e.to_string())?;

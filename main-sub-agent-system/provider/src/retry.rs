@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::Stream;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
 
 /// Transparent retry wrapper for LLM providers
 pub struct RetryProvider {
@@ -49,13 +49,29 @@ impl LlmProvider for RetryProvider {
         let mut last_err = None;
         for attempt in 0..=self.max_retries {
             // Take ownership on first attempt, use pre-cloned copy on retries
-            let req = request.take().or_else(|| retry_request.clone()).unwrap();
+            let req = request.take().or_else(|| retry_request.clone())
+                .expect("retry request should be available");
             match self.inner.complete(req).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) if Self::is_retryable(&e) && attempt < self.max_retries => {
-                    let base = self.base_delay_ms * 2u64.pow(attempt);
-                    let jitter = rand::random::<u64>() % self.base_delay_ms;
-                    let delay = base + jitter;
+                    let base = self
+                        .base_delay_ms
+                        .saturating_mul(2u64.saturating_pow(attempt));
+                    let jitter = if self.base_delay_ms == 0 {
+                        0
+                    } else {
+                        rand::random::<u64>() % self.base_delay_ms
+                    };
+                    let computed = base.saturating_add(jitter);
+                    // Honor server-provided Retry-After (seconds) on 429s —
+                    // never wait less than the server asked, but allow our own
+                    // backoff to wait longer if it would have.
+                    let delay = match &e {
+                        ProviderError::RateLimited {
+                            retry_after: Some(secs),
+                        } => std::cmp::max(computed, secs.saturating_mul(1000)),
+                        _ => computed,
+                    };
                     tracing::warn!(
                         "Provider {} attempt {} failed, retrying in {}ms: {}",
                         self.inner.id(),
@@ -83,13 +99,29 @@ impl LlmProvider for RetryProvider {
         let mut request = Some(request);
         let mut last_err = None;
         for attempt in 0..=self.max_retries {
-            let req = request.take().or_else(|| retry_request.clone()).unwrap();
+            let req = request.take().or_else(|| retry_request.clone())
+                .expect("retry request should be available");
             match self.inner.complete_stream(req).await {
                 Ok(stream) => return Ok(stream),
                 Err(e) if Self::is_retryable(&e) && attempt < self.max_retries => {
-                    let base = self.base_delay_ms * 2u64.pow(attempt);
-                    let jitter = rand::random::<u64>() % self.base_delay_ms;
-                    let delay = base + jitter;
+                    let base = self
+                        .base_delay_ms
+                        .saturating_mul(2u64.saturating_pow(attempt));
+                    let jitter = if self.base_delay_ms == 0 {
+                        0
+                    } else {
+                        rand::random::<u64>() % self.base_delay_ms
+                    };
+                    let computed = base.saturating_add(jitter);
+                    // Honor server-provided Retry-After (seconds) on 429s —
+                    // never wait less than the server asked, but allow our own
+                    // backoff to wait longer if it would have.
+                    let delay = match &e {
+                        ProviderError::RateLimited {
+                            retry_after: Some(secs),
+                        } => std::cmp::max(computed, secs.saturating_mul(1000)),
+                        _ => computed,
+                    };
                     tracing::warn!(
                         "Provider {} stream attempt {} failed, retrying in {}ms: {}",
                         self.inner.id(),
@@ -153,6 +185,7 @@ mod tests {
                     usage: TokenUsage::default(),
                     stop_reason: None,
                     tool_calls: vec![],
+                    annotations: vec![],
                 })
             }
         }
@@ -176,6 +209,7 @@ mod tests {
         CompletionRequest {
             model: "mock".to_string(),
             messages: vec![],
+            input: None,
             max_tokens: None,
             temperature: None,
             system: None,
@@ -184,6 +218,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking: None,
+            response_format: None,
         }
     }
 

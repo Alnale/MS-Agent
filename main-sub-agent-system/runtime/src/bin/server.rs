@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use agent_teams_core::config::AppConfig;
+use agent_core::config::AppConfig;
 
-use agent_teams_provider::anthropic::AnthropicProvider;
-use agent_teams_provider::circuit_breaker::CircuitBreakerProvider;
-use agent_teams_provider::retry::RetryProvider;
+use agent_llm::anthropic::AnthropicProvider;
+use agent_llm::circuit_breaker::CircuitBreakerProvider;
+use agent_llm::openai::OpenAiProvider;
+use agent_llm::openai_responses::OpenAiResponsesProvider;
+use agent_llm::retry::RetryProvider;
 
 use agent_teams_runtime::http::{build_router, start_session_cleanup_task, AppState, Metrics, PresetDef};
 use agent_teams_runtime::telemetry;
@@ -59,25 +61,83 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime_builder = RuntimeBuilder::new(config.clone());
 
     // Register providers using strong typed config
+    // First registered provider becomes the default — register in priority order.
     let providers = &config.providers;
 
-    // Anthropic
-    let mut app_provider: Option<Arc<dyn agent_teams_core::provider::LlmProvider>> = None;
+    let mut app_provider: Option<Arc<dyn agent_core::provider::LlmProvider>> = None;
+
+    // 1. OpenAI Responses API (highest priority — default if configured)
+    if let Some(openai_responses) = &providers.openai_responses {
+        if let Some(api_key) = &openai_responses.api_key {
+            if !api_key.is_empty() {
+                let base: Box<dyn agent_core::provider::LlmProvider> = Box::new(
+                    OpenAiResponsesProvider::new(&openai_responses.base_url, api_key, &openai_responses.default_model),
+                );
+                let with_retry: Box<dyn agent_core::provider::LlmProvider> = Box::new(
+                    RetryProvider::new(base, openai_responses.max_retries, openai_responses.retry_base_delay_ms),
+                );
+                let provider: Arc<dyn agent_core::provider::LlmProvider> = Arc::new(CircuitBreakerProvider::new(
+                    with_retry,
+                    openai_responses.circuit_breaker_threshold,
+                    openai_responses.circuit_breaker_open_duration_secs,
+                ));
+                app_provider = Some(provider.clone());
+                runtime_builder = runtime_builder.with_provider(provider).await;
+                tracing::info!(
+                    "Registered OpenAI Responses API provider (retries={}, cb_threshold={})",
+                    openai_responses.max_retries,
+                    openai_responses.circuit_breaker_threshold
+                );
+            }
+        }
+    }
+
+    // 2. OpenAI-compatible (fallback)
+    if let Some(openai) = &providers.openai {
+        if let Some(api_key) = &openai.api_key {
+            if !api_key.is_empty() {
+                let base: Box<dyn agent_core::provider::LlmProvider> = Box::new(
+                    OpenAiProvider::new(&openai.base_url, api_key, &openai.default_model),
+                );
+                let with_retry: Box<dyn agent_core::provider::LlmProvider> = Box::new(
+                    RetryProvider::new(base, openai.max_retries, openai.retry_base_delay_ms),
+                );
+                let provider: Arc<dyn agent_core::provider::LlmProvider> = Arc::new(CircuitBreakerProvider::new(
+                    with_retry,
+                    openai.circuit_breaker_threshold,
+                    openai.circuit_breaker_open_duration_secs,
+                ));
+                if app_provider.is_none() {
+                    app_provider = Some(provider.clone());
+                }
+                runtime_builder = runtime_builder.with_provider(provider).await;
+                tracing::info!(
+                    "Registered OpenAI-compatible provider (retries={}, cb_threshold={})",
+                    openai.max_retries,
+                    openai.circuit_breaker_threshold
+                );
+            }
+        }
+    }
+
+    // 3. Anthropic (lowest priority fallback)
     if let Some(anthropic) = &providers.anthropic {
         if let Some(api_key) = &anthropic.api_key {
             if !api_key.is_empty() {
-                let base: Box<dyn agent_teams_core::provider::LlmProvider> = Box::new(
+                let base: Box<dyn agent_core::provider::LlmProvider> = Box::new(
                     AnthropicProvider::new(&anthropic.base_url, api_key, &anthropic.default_model),
                 );
-                let with_retry: Box<dyn agent_teams_core::provider::LlmProvider> = Box::new(
+                let with_retry: Box<dyn agent_core::provider::LlmProvider> = Box::new(
                     RetryProvider::new(base, anthropic.max_retries, anthropic.retry_base_delay_ms),
                 );
-                let provider: Arc<dyn agent_teams_core::provider::LlmProvider> = Arc::new(CircuitBreakerProvider::new(
+                let provider: Arc<dyn agent_core::provider::LlmProvider> = Arc::new(CircuitBreakerProvider::new(
                     with_retry,
                     anthropic.circuit_breaker_threshold,
                     anthropic.circuit_breaker_open_duration_secs,
                 ));
-                app_provider = Some(provider.clone());
+                if app_provider.is_none() {
+                    app_provider = Some(provider.clone());
+                }
                 runtime_builder = runtime_builder.with_provider(provider).await;
                 tracing::info!(
                     "Registered Anthropic provider (retries={}, cb_threshold={})",
@@ -91,14 +151,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Register context providers
     runtime_builder = runtime_builder
         .with_context_provider(Arc::new(
-            agent_teams_core::context::MultiTurnContextProvider,
+            agent_core::context::MultiTurnContextProvider,
         ))
         .with_context_provider(Arc::new(
-            agent_teams_core::context::DomainStateContextProvider,
+            agent_core::context::DomainStateContextProvider,
         ))
-        .with_context_provider(Arc::new(agent_teams_core::context::EntityContextProvider))
+        .with_context_provider(Arc::new(agent_core::context::EntityContextProvider))
         .with_context_provider(Arc::new(
-            agent_teams_core::context::SystemInstructionContextProvider,
+            agent_core::context::SystemInstructionContextProvider,
         ));
 
     let (coordinator, registry, tool_registry) = runtime_builder.build().await
@@ -111,10 +171,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let provider = app_provider.ok_or("No LLM provider configured. Check config.json: ensure at least one provider has a valid api_key.")?;
 
     // Extract API keys from security config
-    let api_keys: Vec<String> = config
+    let api_keys: Vec<secrecy::SecretString> = config
         .security
         .as_ref()
-        .map(|s| s.api_keys.clone())
+        .map(|s| s.api_keys.iter().map(|k| secrecy::SecretString::new(k.clone())).collect())
         .unwrap_or_default();
 
     let default_model = config.providers.default_model();
@@ -163,7 +223,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         presets: Arc::new(presets),
         pipeline_timeout_secs,
         rate_limiter,
-        companion_states: Arc::new(dashmap::DashMap::new()),
     };
 
     let mut app = build_router(state);

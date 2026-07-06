@@ -1,0 +1,11 @@
+target/
+.git/
+.gitignore
+*.md
+logs/
+Memory/
+Test/
+docs/
+.env
+release/
+node_modules/

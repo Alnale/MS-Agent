@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{MemoryKind, MemoryQuery};
-use agent_teams_core::memory_store::{EmbeddingProvider, MemoryStore};
+use agent_core::error::Result;
+use agent_core::memory::{MemoryKind, MemoryQuery};
+use agent_core::memory_store::{EmbeddingProvider, MemoryStore};
 
 /// A domain-level summary of user knowledge/preferences
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ impl GlobalSummaryBuilder {
     }
 
     /// Infer domain from a memory entry based on tags and content
-    fn infer_domain(&self, entry: &agent_teams_core::memory::MemoryEntry) -> String {
+    fn infer_domain(&self, entry: &agent_core::memory::MemoryEntry) -> String {
         // Use tags if available
         for tag in &entry.tags {
             if tag != "fact" && tag != "from_summary" && tag != "compressed" {

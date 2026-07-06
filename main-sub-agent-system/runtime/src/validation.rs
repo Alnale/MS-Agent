@@ -2,7 +2,7 @@ use axum::extract::FromRequest;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agent_teams_core::processor::{detect_injection, sanitize_user_input, InjectionRisk};
+use agent_core::processor::{detect_injection, sanitize_user_input, InjectionRisk};
 
 use crate::http::ChatRequest;
 

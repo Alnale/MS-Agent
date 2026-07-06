@@ -169,7 +169,7 @@ mod tests {
     fn create_test_record(agent_id: &str, quality: f32) -> DecisionRecord {
         DecisionRecord {
             input_hash: "test_hash".to_string(),
-            plan: agent_teams_core::plan::ExecutionPlan {
+            plan: agent_core::plan::ExecutionPlan {
                 stages: vec![],
                 strategy: "test".to_string(),
                 estimated_duration_ms: 1000,

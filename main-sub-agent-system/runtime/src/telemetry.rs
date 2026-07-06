@@ -1,12 +1,31 @@
 use opentelemetry::global;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 
-/// Initialize OpenTelemetry tracing with async batch export.
-/// Uses the Tokio runtime for non-blocking span export.
+/// Initialize OpenTelemetry tracing with async batch export via OTLP (gRPC/tonic).
+/// The collector endpoint defaults to `http://localhost:4317` and can be overridden
+/// with the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
 pub fn init_telemetry(service_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let tracer = opentelemetry_jaeger::new_agent_pipeline()
-        .with_service_name(service_name)
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(
+                    std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+                        .unwrap_or_else(|_| "http://localhost:4317".to_string()),
+                ),
+        )
+        .with_trace_config(
+            opentelemetry_sdk::trace::config().with_resource(
+                opentelemetry_sdk::Resource::new(vec![KeyValue::new(
+                    "service.name",
+                    service_name.to_string(),
+                )]),
+            ),
+        )
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);

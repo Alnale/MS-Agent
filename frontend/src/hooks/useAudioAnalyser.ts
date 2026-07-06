@@ -27,12 +27,20 @@ export function useAudioAnalyser(
     }
   }, [videoMuted]);
 
+  // AudioContext lifecycle: created once per bgVideo change, NOT torn down on play/pause
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !bgVideo || !videoPlaying) {
+    if (!el || !bgVideo) {
+      // No video source — tear down everything
       cancelAnimationFrame(rafRef.current);
       frequencyDataRef.current = null;
       setRenderTick(t => t + 1);
+      try { ctxRef.current?.close(); } catch {}
+      ctxRef.current = null;
+      sourceRef.current = null;
+      analyserRef.current = null;
+      gainRef.current = null;
+      connectedElRef.current = null;
       return;
     }
 
@@ -71,6 +79,28 @@ export function useAudioAnalyser(
     analyser.connect(gain);
     gain.connect(ctx.destination);
 
+    return () => {
+      // Only disconnect wiring, do NOT close AudioContext
+      try {
+        source.disconnect();
+        analyser.disconnect();
+        gain.disconnect();
+      } catch {}
+    };
+  }, [videoRef, bgVideo]);
+
+  // Animation loop: runs only when playing
+  useEffect(() => {
+    if (!videoPlaying) {
+      cancelAnimationFrame(rafRef.current);
+      frequencyDataRef.current = null;
+      setRenderTick(t => t + 1);
+      return;
+    }
+
+    const analyser = analyserRef.current;
+    if (!analyser) return;
+
     const buf = new Uint8Array(analyser.frequencyBinCount);
 
     const tick = () => {
@@ -87,13 +117,8 @@ export function useAudioAnalyser(
 
     return () => {
       cancelAnimationFrame(rafRef.current);
-      try {
-        source.disconnect();
-        analyser.disconnect();
-        gain.disconnect();
-      } catch {}
     };
-  }, [videoRef, bgVideo, videoPlaying]);
+  }, [videoPlaying]);
 
   return frequencyDataRef.current;
 }

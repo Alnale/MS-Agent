@@ -62,9 +62,9 @@ impl TagExtractor {
 
         // Entity patterns: dates, numbers, emails, etc.
         let entity_patterns = vec![
-            Regex::new(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}").unwrap(), // dates
-            Regex::new(r"\d+元|\d+块|\$\d+").unwrap(),           // prices
-            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(), // emails
+            Regex::new(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}").expect("invalid date regex"),
+            Regex::new(r"\d+元|\d+块|\$\d+").expect("invalid price regex"),
+            Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").expect("invalid email regex"),
         ];
 
         Self {

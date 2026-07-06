@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_teams_core::boxed_agent::AgentOutput;
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::message::{AgentMessage, AgentStatus};
-use agent_teams_core::registry::AgentRegistry;
+use agent_core::boxed_agent::AgentOutput;
+use agent_core::context::AgentContext;
+use agent_core::message::{AgentMessage, AgentStatus};
+use agent_core::registry::AgentRegistry;
 
 use crate::plan_executor::build_input;
 

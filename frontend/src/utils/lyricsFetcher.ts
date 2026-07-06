@@ -1,6 +1,8 @@
-const ASR_ENDPOINT = 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions';
-const ASR_API_KEY = 'tp-ccqhvm8q4s70re5pz28unpp1s20zh3ddxxitn0j08z4zdm1g';
-const ASR_MODEL = 'mimo-v2.5-asr';
+const ASR_ENDPOINT = import.meta.env.VITE_ASR_ENDPOINT || 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions';
+// SECURITY: This key is embedded in the client-side bundle and is publicly visible.
+// Route ASR requests through a backend proxy for production deployments.
+const ASR_API_KEY = import.meta.env.VITE_ASR_API_KEY || '';
+const ASR_MODEL = import.meta.env.VITE_ASR_MODEL || 'mimo-v2.5-asr';
 
 // Timing constants for lyrics optimization
 const MIN_LINE_DURATION = 1.0; // Minimum duration for a lyric line (seconds)
@@ -65,7 +67,6 @@ async function transcribeAudio(blob: Blob, maxRetries: number = 2): Promise<{ te
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
-        console.log(`[ASR] Retry attempt ${attempt}/${maxRetries}`);
         await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
       }
 
@@ -82,9 +83,12 @@ async function transcribeAudio(blob: Blob, maxRetries: number = 2): Promise<{ te
 
       const arrayBuffer = await audioBlob.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
+      const CHUNK = 65536;
+      const chunks: string[] = [];
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]));
+      }
+      const base64 = btoa(chunks.join(''));
       const mimeType = blob.type || 'audio/mpeg';
       const dataUrl = `data:${mimeType};base64,${base64}`;
 
@@ -109,9 +113,6 @@ async function transcribeAudio(blob: Blob, maxRetries: number = 2): Promise<{ te
       });
 
       if (!res.ok) {
-        const errorText = await res.text().catch(() => 'Unknown error');
-        console.error(`[ASR] API error (attempt ${attempt + 1}):`, res.status, res.statusText, errorText);
-
         // Don't retry on client errors (4xx)
         if (res.status >= 400 && res.status < 500) {
           return null;
@@ -123,40 +124,28 @@ async function transcribeAudio(blob: Blob, maxRetries: number = 2): Promise<{ te
 
       const data = await res.json();
       const msg = data?.choices?.[0]?.message;
-      console.log('[ASR] API response keys:', Object.keys(data));
-      console.log('[ASR] message keys:', msg ? Object.keys(msg) : 'none');
-      console.log('[ASR] usage:', JSON.stringify(data?.usage));
-      if (msg?.segments) console.log('[ASR] segments count:', msg.segments.length, 'sample:', JSON.stringify(msg.segments.slice(0, 2)));
       const text = msg?.content;
       // Use actual audio duration (from the original blob) instead of API-reported duration.
       // API duration only reflects the trimmed portion when audio exceeds 7MB.
       const apiDuration = data?.usage?.seconds || 0;
       const duration = actualDuration > 0 ? actualDuration : apiDuration;
-      if (trimmed && actualDuration > 0) {
-        console.log('[ASR] Audio was trimmed. Actual duration:', actualDuration.toFixed(1), 's, API duration:', apiDuration.toFixed(1), 's');
-      }
       const segments = msg?.segments as Array<{ text: string; start: number; end: number }> | undefined;
       if (!text) {
-        console.warn('[ASR] No text in response, full response:', JSON.stringify(data).slice(0, 300));
         // Don't retry if we got a response but no text
         return null;
       }
 
-      console.log(`[ASR] Transcription successful (attempt ${attempt + 1})`);
       return { text, duration, segments };
     } catch (e) {
-      console.error(`[ASR] Exception (attempt ${attempt + 1}):`, e);
       lastError = e instanceof Error ? e : new Error(String(e));
 
       // Don't retry on network errors that are likely permanent
       if (e instanceof TypeError && e.message.includes('Failed to fetch')) {
-        console.error('[ASR] Network error, not retrying');
         return null;
       }
     }
   }
 
-  console.error('[ASR] All retry attempts failed:', lastError);
   return null;
 }
 
@@ -294,7 +283,7 @@ function adjustForIntro(segments: Array<{ text: string; start: number; end: numb
   // If the first real segment starts after a delay, adjust all timestamps
   const firstRealStart = segments[firstRealSegmentIdx].start;
   if (firstRealStart > 2.0) {
-    console.log(`[ASR] Detected intro delay: ${firstRealStart.toFixed(2)}s, adjusting timestamps...`);
+    // Detected intro delay, adjusting timestamps
 
     // Calculate the offset to apply
     const offset = firstRealStart;
@@ -428,52 +417,30 @@ function formatLrcTime(time: number): string {
  * Accepts audio blob and returns LRC string or null.
  */
 export async function fetchLyricsFromASR(blob: Blob): Promise<string | null> {
-  console.log('[ASR] fetchLyricsFromASR called, blob size:', blob.size, 'type:', blob.type);
-
   // Validate audio blob
   const validation = validateAudioBlob(blob);
   if (!validation.valid) {
-    console.error('[ASR] Audio validation failed:', validation.error);
     return null;
   }
 
   const result = await transcribeAudio(blob);
-  console.log('[ASR] transcribeAudio result:', result ? { textLen: result.text.length, duration: result.duration, hasSegments: !!result.segments, preview: result.text.slice(0, 100) } : null);
   if (!result || !result.text) return null;
 
   // Use API-provided timestamps if available
   if (result.segments && result.segments.length > 0) {
     const filtered = result.segments.filter(s => s.text?.trim());
     if (filtered.length > 0) {
-      // Log original segment durations for debugging
-      console.log('[ASR] Original segment durations:');
-      filtered.forEach((s, i) => {
-        const dur = s.end - s.start;
-        console.log(`  [${i}] ${dur.toFixed(2)}s "${s.text.trim()}" (${s.start.toFixed(2)}-${s.end.toFixed(2)})`);
-      });
-
       // Optimize segments with total duration for intro detection
       const optimized = optimizeSegments(filtered, result.duration);
-      console.log('[ASR] Optimized segments:', optimized.length, '(from', filtered.length, ')');
-
-      // Log optimized segment durations
-      console.log('[ASR] Optimized segment durations:');
-      optimized.forEach((s, i) => {
-        const dur = s.end - s.start;
-        console.log(`  [${i}] ${dur.toFixed(2)}s "${s.text.trim()}" (${s.start.toFixed(2)}-${s.end.toFixed(2)})`);
-      });
 
       const lrc = optimized.map((s) => {
         const t = s.start;
         return `[${formatLrcTime(t)}]${s.text.trim()}`;
       }).join('\n');
-      console.log('[ASR] Using optimized segment timestamps, lines:', lrc.split('\n').length);
       return lrc;
     }
   }
 
   // Fallback: estimate timestamps from text + duration
-  const lrc = textToLrc(result.text, result.duration);
-  console.log('[ASR] Using estimated timestamps, lines:', lrc.split('\n').length);
-  return lrc;
+  return textToLrc(result.text, result.duration);
 }

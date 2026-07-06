@@ -50,7 +50,7 @@ export interface HealthResponse {
 
 /** SSE stream chunk from POST /chat */
 export interface StreamChunk {
-  type: 'delta' | 'done' | 'error' | 'tool_status' | 'sub_agent_results' | 'agent_progress' | 'companion_state';
+  type: 'delta' | 'done' | 'error' | 'tool_status' | 'sub_agent_results' | 'agent_progress' | 'companion_state' | 'annotations';
   delta: string;
   thinking_delta?: string;
   done: boolean;
@@ -63,6 +63,19 @@ export interface StreamChunk {
   sub_agent_results?: SubAgentResultSummary[];
   agent_progress?: AgentProgress;
   companion_state?: CompanionState;
+  /** Annotations from the LLM response (e.g., web search citations) */
+  annotations?: WebSearchAnnotation[];
+}
+
+/** Web search citation annotation */
+export interface WebSearchAnnotation {
+  type: 'url_citation';
+  url: string;
+  title: string;
+  summary?: string;
+  site_name?: string;
+  publish_time?: string;
+  logo_url?: string;
 }
 
 /** Tool execution status event */
@@ -122,12 +135,6 @@ export interface ToolDefinition {
 
 // ─── UI types ─────────────────────────────────────────────────────
 
-/** A single HTTP source extracted from http_request tool output */
-export interface HttpSource {
-  url: string;
-  title?: string;
-}
-
 /** Chat message for UI display */
 export interface ChatMessage {
   id: string;
@@ -140,11 +147,12 @@ export interface ChatMessage {
   thinking?: string;
   subAgentResults?: SubAgentResultSummary[];
   responseTimeMs?: number;
-  httpSources?: HttpSource[];
   /** Sticker URL recommended by sentiment agent */
   stickerUrl?: string;
   /** Companion emotional state at time of this message */
   companionState?: CompanionState;
+  /** Web search citations from annotations */
+  annotations?: WebSearchAnnotation[];
 }
 
 /** Preset definition from backend */

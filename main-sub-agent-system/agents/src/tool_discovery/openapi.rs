@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::tool::{Tool, ToolParameters, UnifiedToolRegistry};
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::tool::{Tool, ToolParameters, UnifiedToolRegistry};
 
 /// OpenAPI specification (simplified)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +162,7 @@ impl OpenApiImporter {
                     name: tool_name.clone(),
                     description: format!("[{} {}] {}", method.to_uppercase(), path, description),
                     parameters: ToolParameters { schema, required },
+                    tool_type: "function".to_string(),
                     executor_id: "openapi".to_string(),
                     permission_tags: vec!["openapi".to_string(), method.clone()],
                     allow_parallel: true,

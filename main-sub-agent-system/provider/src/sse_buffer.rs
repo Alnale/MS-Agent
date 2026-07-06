@@ -2,23 +2,26 @@ use futures::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use agent_teams_core::provider::{CompletionChunk, ProviderError};
+use agent_core::provider::{CompletionChunk, ProviderError};
 
 const MAX_SSE_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
 
 /// Buffered SSE parser that handles TCP chunk boundary misalignment.
-/// Accumulates bytes until a complete SSE event (`\n\n` boundary) is found,
-/// then parses and yields the event.
+/// Accumulates raw bytes until a complete SSE event (`\n\n` boundary) is found,
+/// then decodes and parses the event. Decoding at event boundaries (which are
+/// ASCII `\n\n`) avoids corrupting multi-byte UTF-8 characters that span chunk
+/// boundaries — `from_utf8_lossy` on a partial chunk would replace the trailing
+/// incomplete bytes with U+FFFD, losing data permanently.
 pub struct SseBuffer<S> {
     inner: S,
-    buffer: String,
+    buffer: Vec<u8>,
 }
 
 impl<S> SseBuffer<S> {
     pub fn new(inner: S) -> Self {
         Self {
             inner,
-            buffer: String::new(),
+            buffer: Vec::new(),
         }
     }
 }
@@ -31,12 +34,17 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            // Try to extract a complete event from the buffer
-            if let Some(event_end) = self.buffer.find("\n\n") {
-                let event_str = self.buffer[..event_end].to_string();
-                self.buffer.drain(..event_end + 2);
+            // Try to extract a complete event from the buffer.
+            // `\n\n` is ASCII, so byte-level search is safe in UTF-8 streams
+            // (multi-byte sequences never contain ASCII bytes as sub-bytes).
+            if let Some(event_end) = find_subslice(&self.buffer, b"\n\n") {
+                let event_bytes = self.buffer.split_off(event_end + 2);
+                let event_bytes = std::mem::replace(&mut self.buffer, event_bytes);
+                let event_bytes = &event_bytes[..event_end];
 
-                // Parse the SSE event
+                // Decode the complete event as UTF-8 — at this point the bytes
+                // form a full event, so any multi-byte char is complete.
+                let event_str = String::from_utf8_lossy(event_bytes);
                 if let Some(chunk) = parse_sse_event(&event_str) {
                     return Poll::Ready(Some(Ok(chunk)));
                 }
@@ -47,8 +55,7 @@ where
             // Not enough data in buffer, try to read more from the inner stream
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.buffer.push_str(&text);
+                    self.buffer.extend_from_slice(&bytes);
                     // Prevent unbounded buffer growth on malformed streams
                     if self.buffer.len() > MAX_SSE_BUFFER_SIZE {
                         self.buffer.clear();
@@ -65,8 +72,8 @@ where
                 Poll::Ready(None) => {
                     // Stream ended — flush any remaining buffer
                     if !self.buffer.is_empty() {
-                        let remaining = self.buffer.clone();
-                        self.buffer.clear();
+                        let buf = std::mem::take(&mut self.buffer);
+                        let remaining = String::from_utf8_lossy(&buf);
                         if let Some(chunk) = parse_sse_event(&remaining) {
                             return Poll::Ready(Some(Ok(chunk)));
                         }
@@ -77,6 +84,16 @@ where
             }
         }
     }
+}
+
+/// Find the starting index of `needle` in `haystack`, or None.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Parse a single SSE event string into a CompletionChunk.
@@ -102,7 +119,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                 sub_agent_results: None,
                 companion_state: None,
                 agent_progress: None,
-            });
+            
+                    annotations: None,});
         }
 
         // Handle "data: {json}" lines
@@ -121,7 +139,7 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                             thinking_delta: None,
                             done: false,
                             usage: None,
-                            tool_call_delta: Some(agent_teams_core::tool::ToolCallDelta {
+                            tool_call_delta: Some(agent_core::tool::ToolCallDelta {
                                 index,
                                 id: Some(id),
                                 name: Some(name),
@@ -131,7 +149,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                             sub_agent_results: None,
                 companion_state: None,
                             agent_progress: None,
-                        });
+                        
+                    annotations: None,});
                     }
                 }
 
@@ -147,7 +166,7 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                             thinking_delta: None,
                             done: false,
                             usage: None,
-                            tool_call_delta: Some(agent_teams_core::tool::ToolCallDelta {
+                            tool_call_delta: Some(agent_core::tool::ToolCallDelta {
                                 index,
                                 id: None,
                                 name: None,
@@ -157,7 +176,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                             sub_agent_results: None,
                 companion_state: None,
                             agent_progress: None,
-                        });
+                        
+                    annotations: None,});
                     }
                 }
 
@@ -175,7 +195,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                 sub_agent_results: None,
                 companion_state: None,
                                 agent_progress: None,
-                            });
+                            
+                    annotations: None,});
                         }
                     }
                     // Anthropic text delta (content_block_delta with text)
@@ -191,7 +212,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                 sub_agent_results: None,
                 companion_state: None,
                                 agent_progress: None,
-                            });
+                            
+                    annotations: None,});
                         }
                     }
                 }
@@ -209,7 +231,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                             sub_agent_results: None,
                 companion_state: None,
                             agent_progress: None,
-                        });
+                        
+                    annotations: None,});
                     }
                 }
 
@@ -225,7 +248,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                         sub_agent_results: None,
                 companion_state: None,
                         agent_progress: None,
-                    });
+                    
+                    annotations: None,});
                 }
 
                 // OpenAI format: {"choices": [{"delta": {"content": "..."}}]}
@@ -246,7 +270,7 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                         thinking_delta: None,
                                         done: false,
                                         usage: None,
-                                        tool_call_delta: Some(agent_teams_core::tool::ToolCallDelta {
+                                        tool_call_delta: Some(agent_core::tool::ToolCallDelta {
                                             index,
                                             id,
                                             name,
@@ -256,7 +280,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                         sub_agent_results: None,
                 companion_state: None,
                                         agent_progress: None,
-                                    });
+                                    
+                    annotations: None,});
                                 }
                             }
                         }
@@ -273,7 +298,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                     sub_agent_results: None,
                 companion_state: None,
                                     agent_progress: None,
-                                });
+                                
+                    annotations: None,});
                             }
                         }
                         let finish = choice["finish_reason"].as_str();
@@ -288,7 +314,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                                 sub_agent_results: None,
                 companion_state: None,
                                 agent_progress: None,
-                            });
+                            
+                    annotations: None,});
                         }
                     }
                 }
@@ -306,7 +333,8 @@ fn parse_sse_event(event: &str) -> Option<CompletionChunk> {
                         sub_agent_results: None,
                 companion_state: None,
                         agent_progress: None,
-                    });
+                    
+                    annotations: None,});
                 }
             }
         }

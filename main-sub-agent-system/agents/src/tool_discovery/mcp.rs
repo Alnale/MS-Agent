@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::tool::{
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::tool::{
     Tool, ToolCall, ToolExecutionContext, ToolExecutor, ToolParameters, ToolResult,
     UnifiedToolRegistry,
 };
@@ -249,6 +249,7 @@ impl McpToolAdapter {
                         })
                         .unwrap_or_default(),
                 },
+                tool_type: "function".to_string(),
                 executor_id: executor_id.clone(),
                 permission_tags: vec!["mcp".to_string()],
                 allow_parallel: true,

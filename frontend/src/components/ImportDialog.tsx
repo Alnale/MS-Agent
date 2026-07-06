@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
 export type ConflictChoice = 'skip' | 'overwrite' | 'cancel';
 export type SubfolderChoice = 'include' | 'exclude';
@@ -26,7 +26,7 @@ interface SubfolderProps {
 
 type Props = ConflictProps | SubfolderProps;
 
-export function ImportDialog({ mode, info, onResolve }: Props) {
+export const ImportDialog = memo(function ImportDialog({ mode, info, onResolve }: Props) {
   const [remember, setRemember] = useState(false);
 
   if (mode === 'conflict') {
@@ -93,4 +93,6 @@ export function ImportDialog({ mode, info, onResolve }: Props) {
       </div>
     </div>
   );
-}
+});
+
+export default ImportDialog;

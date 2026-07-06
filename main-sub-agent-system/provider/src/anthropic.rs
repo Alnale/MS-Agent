@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
 use async_trait::async_trait;
 use futures::Stream;
 use secrecy::{ExposeSecret, SecretString};
@@ -59,10 +59,21 @@ impl AnthropicProvider {
         })
     }
 
-    fn check_status(status: reqwest::StatusCode) -> Option<ProviderError> {
+    /// Check response status and map to ProviderError. On 429, read the
+    /// `Retry-After` header so the retry layer can honor the server's backoff
+    /// rather than guessing with local exponential delay.
+    fn check_status(response: &reqwest::Response) -> Option<ProviderError> {
+        let status = response.status();
         match status.as_u16() {
             401 => Some(ProviderError::Auth("Invalid API key".to_string())),
-            429 => Some(ProviderError::RateLimited { retry_after: None }),
+            429 => {
+                let retry_after = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok());
+                Some(ProviderError::RateLimited { retry_after })
+            }
             400..=499 => Some(ProviderError::InvalidResponse(format!(
                 "Client error: {}",
                 status
@@ -167,7 +178,7 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 
@@ -195,7 +206,7 @@ impl LlmProvider for AnthropicProvider {
                         let id = block["id"].as_str().unwrap_or("").to_string();
                         let name = block["name"].as_str().unwrap_or("").to_string();
                         let arguments = block["input"].clone();
-                        tool_calls.push(agent_teams_core::tool::ToolCall {
+                        tool_calls.push(agent_core::tool::ToolCall {
                             id,
                             name,
                             arguments,
@@ -212,6 +223,8 @@ impl LlmProvider for AnthropicProvider {
             cached_tokens: json["usage"]["cache_read_input_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
+            reasoning_tokens: 0,
+            total_tokens: 0,
         };
 
         // If content is empty but thinking exists, log warning
@@ -244,6 +257,7 @@ impl LlmProvider for AnthropicProvider {
             usage,
             stop_reason,
             tool_calls,
+            annotations: vec![],
         })
     }
 
@@ -296,7 +310,7 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 

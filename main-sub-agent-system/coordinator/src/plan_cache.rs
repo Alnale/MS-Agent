@@ -1,15 +1,15 @@
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use lru::LruCache;
 
-use agent_teams_core::plan::ExecutionPlan;
+use agent_core::plan::ExecutionPlan;
 
 /// Cached plan with expiration time
 struct CachedPlan {
-    plan: ExecutionPlan,
+    plan: Arc<ExecutionPlan>,
     created_at: Instant,
     ttl: Duration,
 }
@@ -35,16 +35,20 @@ impl PlanCache {
     }
 
     pub async fn get(&self, key: &str) -> Option<ExecutionPlan> {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached) = cache.get(key) {
-            if cached.created_at.elapsed() < cached.ttl {
-                return Some(cached.plan.clone());
+        let arc = {
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = cache.get(key) {
+                if cached.created_at.elapsed() < cached.ttl {
+                    Some(Arc::clone(&cached.plan))
+                } else {
+                    cache.pop(key);
+                    None
+                }
             } else {
-                // Expired, remove it
-                cache.pop(key);
+                None
             }
-        }
-        None
+        };
+        arc.map(|a| (*a).clone())
     }
 
     pub async fn put(&self, key: String, plan: ExecutionPlan, ttl_secs: u64) {
@@ -52,7 +56,7 @@ impl PlanCache {
         cache.put(
             key,
             CachedPlan {
-                plan,
+                plan: Arc::new(plan),
                 created_at: Instant::now(),
                 ttl: Duration::from_secs(ttl_secs),
             },
@@ -73,7 +77,7 @@ impl PlanCache {
             cache.put(
                 key.clone(),
                 CachedPlan {
-                    plan,
+                    plan: Arc::new(plan),
                     created_at: Instant::now(),
                     ttl: Duration::from_secs(ttl_secs),
                 },
@@ -139,8 +143,8 @@ impl PlanCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_teams_core::pipeline::StageMode;
-    use agent_teams_core::plan::PlanStage;
+    use agent_core::pipeline::StageMode;
+    use agent_core::plan::PlanStage;
 
     fn make_test_plan() -> ExecutionPlan {
         ExecutionPlan {

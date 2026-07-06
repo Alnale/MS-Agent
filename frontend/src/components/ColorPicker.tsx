@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 
 interface Props {
   label: string;
@@ -26,7 +26,7 @@ const DEFAULT_PRESETS = [
   '#fecaca', '#1a1a2e', '#1e1b2e', '#2d1b3d',
 ];
 
-export function ColorPicker({ label, color, alpha, presets = DEFAULT_PRESETS, onColorChange, onAlphaChange }: Props) {
+export const ColorPicker = memo(function ColorPicker({ label, color, alpha, presets = DEFAULT_PRESETS, onColorChange, onAlphaChange }: Props) {
   const [hexInput, setHexInput] = useState(color);
   const [editing, setEditing] = useState(false);
   const nativeRef = useRef<HTMLInputElement>(null);
@@ -134,4 +134,4 @@ export function ColorPicker({ label, color, alpha, presets = DEFAULT_PRESETS, on
       </div>
     </div>
   );
-}
+});

@@ -40,7 +40,27 @@
       "timeout_ms": 300000,
       "max_retries": 3,
       "retry_base_delay_ms": 1000,
-      "circuit_breaker_threshold": 50,
+      "circuit_breaker_threshold": 5,
+      "circuit_breaker_open_duration_secs": 10
+    },
+    "openai": {
+      "base_url": "${OPENAI_BASE_URL:-https://api.xiaomimimo.com/v1}",
+      "api_key": "${OPENAI_API_KEY}",
+      "default_model": "${OPENAI_MODEL:-mimo-v2.5-pro}",
+      "timeout_ms": 300000,
+      "max_retries": 3,
+      "retry_base_delay_ms": 1000,
+      "circuit_breaker_threshold": 5,
+      "circuit_breaker_open_duration_secs": 10
+    },
+    "openai_responses": {
+      "base_url": "${OPENAI_RESPONSES_BASE_URL:-https://api.xiaomimimo.com/v1}",
+      "api_key": "${OPENAI_RESPONSES_API_KEY}",
+      "default_model": "${OPENAI_RESPONSES_MODEL:-mimo-v2.5-pro}",
+      "timeout_ms": 300000,
+      "max_retries": 3,
+      "retry_base_delay_ms": 1000,
+      "circuit_breaker_threshold": 5,
       "circuit_breaker_open_duration_secs": 10
     }
   },
@@ -136,7 +156,9 @@
     "log_level": "info",
     "cors_enabled": true,
     "cors_allowed_origins": ["http://localhost:3000", "http://localhost:5173"],
-    "max_concurrent_requests": 100
+    "max_concurrent_requests": 100,
+    "rate_limit_max_requests": 60,
+    "rate_limit_window_secs": 60
   },
 
   "features": {

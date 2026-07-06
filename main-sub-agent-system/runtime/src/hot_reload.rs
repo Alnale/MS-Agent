@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use agent_teams_core::config::AppConfig;
+use agent_core::config::AppConfig;
 use tokio::fs;
 
 /// Tool configuration change
@@ -25,7 +25,7 @@ pub struct HotReloadChanges {
     pub max_concurrent_requests_changed: Option<usize>,
     pub request_timeout_changed: Option<u64>,
     pub pipeline_timeout_changed: Option<u64>,
-    pub cost_optimization_changed: Option<agent_teams_core::config::CostOptimizationConfig>,
+    pub cost_optimization_changed: Option<agent_core::config::CostOptimizationConfig>,
     /// Tool configuration changes detected
     pub tool_changes: Vec<ToolConfigChange>,
 }
@@ -152,7 +152,13 @@ impl HotReloadWatcher {
                     None
                 }
             })
-            .or(new_config.runtime.max_concurrent_requests);
+            .or_else(|| {
+                if old_config.is_none() {
+                    new_config.runtime.max_concurrent_requests
+                } else {
+                    None
+                }
+            });
 
         let request_timeout_changed = old_config
             .as_ref()
@@ -165,7 +171,13 @@ impl HotReloadWatcher {
                 (None, Some(new_t)) => Some(new_t.request_timeout_ms),
                 _ => None,
             })
-            .or_else(|| new_config.timeouts.as_ref().map(|t| t.request_timeout_ms));
+            .or_else(|| {
+                if old_config.is_none() {
+                    new_config.timeouts.as_ref().map(|t| t.request_timeout_ms)
+                } else {
+                    None
+                }
+            });
 
         let pipeline_timeout_changed = old_config
             .as_ref()
@@ -178,7 +190,13 @@ impl HotReloadWatcher {
                 (None, Some(new_t)) => Some(new_t.pipeline_timeout_ms),
                 _ => None,
             })
-            .or_else(|| new_config.timeouts.as_ref().map(|t| t.pipeline_timeout_ms));
+            .or_else(|| {
+                if old_config.is_none() {
+                    new_config.timeouts.as_ref().map(|t| t.pipeline_timeout_ms)
+                } else {
+                    None
+                }
+            });
 
         let cost_optimization_changed = old_config
             .as_ref()
@@ -189,7 +207,13 @@ impl HotReloadWatcher {
                     None
                 }
             })
-            .or_else(|| new_config.cost_optimization.clone());
+            .or_else(|| {
+                if old_config.is_none() {
+                    new_config.cost_optimization.clone()
+                } else {
+                    None
+                }
+            });
 
         HotReloadChanges {
             log_level_changed,

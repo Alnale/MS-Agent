@@ -5,9 +5,9 @@ pub mod redis_memory;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::error::Result;
-use agent_teams_core::state::{ApplyResult, StateStore};
+use agent_core::effect::AgentEffect;
+use agent_core::error::Result;
+use agent_core::state::{ApplyResult, StateStore};
 
 /// In-memory state store (for development/testing)
 pub struct InMemoryStateStore {

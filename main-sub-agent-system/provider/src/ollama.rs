@@ -1,7 +1,26 @@
 use async_trait::async_trait;
 use futures::Stream;
+use std::sync::OnceLock;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
+
+/// Shared HTTP client with connection pooling and timeouts.
+/// Ollama runs locally but can still hang on large generations or stalled
+/// connections — without a timeout a single request can block a worker forever.
+fn shared_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .pool_max_idle_per_host(10)
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build shared HTTP client: {}, using default", e);
+                reqwest::Client::new()
+            })
+    })
+}
 
 /// Ollama local provider
 pub struct OllamaProvider {
@@ -13,14 +32,26 @@ pub struct OllamaProvider {
 impl OllamaProvider {
     pub fn new(base_url: &str, default_model: &str) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: shared_client().clone(),
             base_url: base_url.to_string(),
             default_model: default_model.to_string(),
         }
     }
 
-    fn check_status(status: reqwest::StatusCode) -> Option<ProviderError> {
+    /// Check response status and map to ProviderError. On 429, read the
+    /// `Retry-After` header so the retry layer can honor the server's backoff
+    /// rather than guessing with local exponential delay.
+    fn check_status(response: &reqwest::Response) -> Option<ProviderError> {
+        let status = response.status();
         match status.as_u16() {
+            429 => {
+                let retry_after = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok());
+                Some(ProviderError::RateLimited { retry_after })
+            }
             400..=499 => Some(ProviderError::InvalidResponse(format!(
                 "Client error: {}",
                 status
@@ -111,7 +142,7 @@ impl LlmProvider for OllamaProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 
@@ -134,7 +165,7 @@ impl LlmProvider for OllamaProvider {
                     .map(|tc| {
                         let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                         let arguments = tc["function"]["arguments"].clone();
-                        agent_teams_core::tool::ToolCall {
+                        agent_core::tool::ToolCall {
                             id: format!("ollama_{}", std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -155,9 +186,12 @@ impl LlmProvider for OllamaProvider {
                 input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0) as u32,
                 output_tokens: json["eval_count"].as_u64().unwrap_or(0) as u32,
                 cached_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 0,
             },
             stop_reason: None,
             tool_calls,
+            annotations: vec![],
         })
     }
 
@@ -200,7 +234,7 @@ impl LlmProvider for OllamaProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 
@@ -209,14 +243,19 @@ impl LlmProvider for OllamaProvider {
         let byte_stream = response.bytes_stream();
 
         let stream = futures::stream::unfold(
-            (byte_stream, String::new()),
+            (byte_stream, Vec::<u8>::new()),
             |(mut byte_stream, mut buffer)| async move {
                 loop {
-                    // Try to extract a complete line from buffer
-                    if let Some(line_end) = buffer.find('\n') {
-                        let line = buffer[..line_end].to_string();
-                        buffer.drain(..line_end + 1);
+                    // Try to extract a complete line from buffer.
+                    // `\n` is ASCII, so byte-level search is safe in UTF-8 streams
+                    // (multi-byte sequences never contain ASCII bytes as sub-bytes).
+                    if let Some(line_end) = buffer.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = buffer.drain(..line_end + 1).collect();
+                        let line_bytes = &line_bytes[..line_end];
 
+                        // Decode the complete line as UTF-8 — at a line boundary
+                        // any multi-byte char is complete, so no data is lost.
+                        let line = String::from_utf8_lossy(line_bytes);
                         let trimmed = line.trim();
                         if !trimmed.is_empty() {
                             let result = match serde_json::from_str::<serde_json::Value>(trimmed) {
@@ -236,7 +275,8 @@ impl LlmProvider for OllamaProvider {
                                         sub_agent_results: None,
                 companion_state: None,
                                         agent_progress: None,
-                                    })
+
+                    annotations: None,})
                                 }
                                 Err(e) => Err(ProviderError::InvalidResponse(e.to_string())),
                             };
@@ -248,7 +288,7 @@ impl LlmProvider for OllamaProvider {
                     // Need more data from the byte stream
                     match byte_stream.next().await {
                         Some(Ok(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            buffer.extend_from_slice(&bytes);
                         }
                         Some(Err(e)) => {
                             return Some((

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::sync::OnceLock;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
 use tracing;
 
 /// Shared HTTP client with connection pooling
@@ -127,6 +127,7 @@ impl LlmProvider for HttpProvider {
             usage: TokenUsage::default(),
             stop_reason: None,
             tool_calls: vec![],
+            annotations: vec![],
         })
     }
 

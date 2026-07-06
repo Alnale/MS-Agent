@@ -1,19 +1,20 @@
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use agent_teams_core::config::AppConfig;
-use agent_teams_core::context_provider::ContextProvider;
-use agent_teams_core::domain::DomainModule;
-use agent_teams_core::event::EventBus;
-use agent_teams_core::hook::HookRegistry;
-use agent_teams_core::memory_store::{EmbeddingError, EmbeddingProvider};
-use agent_teams_core::registry::AgentRegistry;
-use agent_teams_core::tool::UnifiedToolRegistry;
+use agent_core::config::AppConfig;
+use agent_core::context_provider::ContextProvider;
+use agent_core::domain::DomainModule;
+use agent_core::event::EventBus;
+use agent_core::hook::HookRegistry;
+use agent_core::memory_store::{EmbeddingError, EmbeddingProvider};
+use agent_core::registry::AgentRegistry;
+use agent_core::tool::UnifiedToolRegistry;
 
 
 use agent_teams_agents::main_agent::{MainAgent, MainAgentConfig};
 use agent_teams_coordinator::memory_manager::MemoryManager;
 use agent_teams_coordinator::MainAgentCoordinator;
-use agent_teams_provider::registry::ProviderRegistry;
+use agent_llm::registry::ProviderRegistry;
 use agent_teams_storage::memory::InMemoryMemoryStore;
 
 /// Feature-hashing TF-IDF embedding provider for development/testing.
@@ -25,8 +26,13 @@ pub struct HashEmbeddingProvider {
 }
 
 impl HashEmbeddingProvider {
-    pub fn new(dimensions: usize) -> Self {
-        Self { dimensions }
+    /// Create a new provider. `dimensions` is `NonZeroUsize` so the
+    /// "must be > 0" invariant is enforced by the type system instead of a
+    /// runtime `assert!` that would panic on bad input.
+    pub fn new(dimensions: NonZeroUsize) -> Self {
+        Self {
+            dimensions: dimensions.get(),
+        }
     }
 
     /// FNV-1a hash for feature hashing
@@ -150,7 +156,7 @@ impl RuntimeBuilder {
 
     pub async fn with_provider(
         self,
-        provider: Arc<dyn agent_teams_core::provider::LlmProvider>,
+        provider: Arc<dyn agent_core::provider::LlmProvider>,
     ) -> Self {
         self.provider_registry.register(provider);
         self
@@ -185,12 +191,12 @@ impl RuntimeBuilder {
         if let Some(ref external_tools) = self.config.external_tools {
             for source in external_tools {
                 match source {
-                    agent_teams_core::tool::ExternalToolSource::Mcp { endpoint, transport } => {
+                    agent_core::tool::ExternalToolSource::Mcp { endpoint, transport } => {
                         let transport_type = match transport {
-                            agent_teams_core::tool::McpTransport::Sse => {
+                            agent_core::tool::McpTransport::Sse => {
                                 agent_teams_agents::tool_discovery::mcp::McpTransport::Sse
                             }
-                            agent_teams_core::tool::McpTransport::Stdio => {
+                            agent_core::tool::McpTransport::Stdio => {
                                 agent_teams_agents::tool_discovery::mcp::McpTransport::Stdio
                             }
                         };
@@ -225,7 +231,7 @@ impl RuntimeBuilder {
                             }
                         }
                     }
-                    agent_teams_core::tool::ExternalToolSource::OpenApi { url, auth: _ } => {
+                    agent_core::tool::ExternalToolSource::OpenApi { url, auth: _ } => {
                         match agent_teams_agents::tool_discovery::openapi::OpenApiImporter::import_from_url(
                             url,
                             &self.tool_registry,
@@ -302,8 +308,11 @@ impl RuntimeBuilder {
             );
             let long_term_store = Arc::new(InMemoryMemoryStore::new());
 
-            let embedding_provider: Arc<dyn EmbeddingProvider> =
-                Arc::new(HashEmbeddingProvider::new(128));
+            let embedding_provider: Arc<dyn EmbeddingProvider> = Arc::new(
+                HashEmbeddingProvider::new(
+                    NonZeroUsize::new(128).expect("128 is non-zero"),
+                ),
+            );
 
             let mm = Arc::new(
                 MemoryManager::new(
@@ -324,7 +333,7 @@ impl RuntimeBuilder {
 
         // Create unified cache infrastructure for SubAgents
         let shared_cache = Arc::new(
-            agent_teams_core::unified_memory_bus::SharedMemoryCache::new(
+            agent_core::unified_memory_bus::SharedMemoryCache::new(
                 main_agent_config.shared_cache_capacity,
             ),
         );
@@ -335,11 +344,11 @@ impl RuntimeBuilder {
             .unified_cache
             .clone()
             .unwrap_or_default();
-        let mut bus_builder = agent_teams_core::unified_memory_bus::UnifiedMemoryBus::new(
+        let mut bus_builder = agent_core::unified_memory_bus::UnifiedMemoryBus::new(
             main_agent_config.shared_cache_capacity,
         )
         .with_memory_event_bus(Arc::new(
-            agent_teams_core::memory_event_bus::MemoryEventBus::new(
+            agent_core::memory_event_bus::MemoryEventBus::new(
                 main_agent_config.memory_event_bus_capacity,
             ),
         ));
@@ -350,7 +359,7 @@ impl RuntimeBuilder {
         }
         let unified_bus = Arc::new(bus_builder);
 
-        let global_store: Option<Arc<dyn agent_teams_core::memory_store::MemoryStore>> =
+        let global_store: Option<Arc<dyn agent_core::memory_store::MemoryStore>> =
             memory_manager.as_ref().map(|mm| mm.long_term_store().clone());
 
         let cache_manager = agent_teams_coordinator::UnifiedCacheManager::new(

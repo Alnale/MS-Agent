@@ -71,6 +71,8 @@ pub enum AgentTeamsError {
     ToolTimeout { tool_name: String, timeout_ms: u64 },
     #[error("Tool {tool_name} execution failed: {message}")]
     ToolExecutionFailed { tool_name: String, message: String },
+    #[error("Tool {tool_name} pending approval: {message}")]
+    ToolPendingApproval { tool_name: String, message: String },
 
     // Hook
     #[error("Hook {hook_name} halted: {reason}")]
@@ -87,6 +89,8 @@ pub enum AgentTeamsError {
     ConfigError(String),
     #[error("Config validation error: {0}")]
     ConfigValidation(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
 
     // Generic
     #[error("Serialization error: {0}")]

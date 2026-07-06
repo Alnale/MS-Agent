@@ -4,10 +4,10 @@
 //! 支持：导入文件到媒体库、设置背景、播放/暂停/切歌等。
 
 use async_trait::async_trait;
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 pub struct MediaTool;
 
@@ -52,7 +52,6 @@ impl ToolExecutor for MediaTool {
                     "  clear_bg — 清除背景（恢复默认）\n",
                     "  get_status — 获取当前媒体状态\n\n",
                     "工具联动：\n",
-                    "- http_request/http_get 下载的媒体文件可用 file(write) 保存后导入\n",
                     "- file(list/glob) 可查找本地媒体文件\n",
                     "- file(info) 可查看媒体文件信息",
                 ))
@@ -119,27 +118,27 @@ impl MediaTool {
     fn handle_import(&self, call: &ToolCall, action: &str) -> Result<serde_json::Value> {
         let file_path = call.arguments["file_path"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("file_path 参数不能为空".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("file_path 参数不能为空".to_string()))?;
 
         let path = std::path::Path::new(file_path);
         if !path.exists() {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("文件不存在: {}", file_path)
             ));
         }
 
         // Size check (100MB limit for base64 transfer)
         let metadata = std::fs::metadata(path).map_err(|e|
-            agent_teams_core::error::AgentTeamsError::NotFound(format!("无法读取文件元数据: {}", e))
+            agent_core::error::AgentTeamsError::NotFound(format!("无法读取文件元数据: {}", e))
         )?;
         if metadata.len() > 100 * 1024 * 1024 {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("文件过大 ({:.1}MB)，超过100MB限制", metadata.len() as f64 / 1024.0 / 1024.0)
             ));
         }
 
         let data = std::fs::read(path).map_err(|e|
-            agent_teams_core::error::AgentTeamsError::NotFound(format!("无法读取文件: {}", e))
+            agent_core::error::AgentTeamsError::NotFound(format!("无法读取文件: {}", e))
         )?;
         let b64 = base64_encode(&data);
         let file_name = path.file_stem()

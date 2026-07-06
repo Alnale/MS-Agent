@@ -81,13 +81,6 @@ export function useSession(): UseSessionReturn {
     return id;
   }, []);
 
-  const loadSession = useCallback(
-    (sessionId: string): Session | null => {
-      return sessions.find((s) => s.id === sessionId) || null;
-    },
-    [sessions]
-  );
-
   const saveSession = useCallback(
     (sessionId: string, messages: ChatMessage[]) => {
       setSessions((prev) => {
@@ -141,7 +134,6 @@ export function useSession(): UseSessionReturn {
     sessions,
     currentSessionId,
     createSession,
-    loadSession,
     saveSession,
     deleteSession,
     deleteSessions,

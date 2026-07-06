@@ -4,8 +4,7 @@ version = "1.3.0"
 edition = "2021"
 
 [dependencies]
-agent-teams-core = { path = "../core" }
-agent-teams-provider = { path = "../provider" }
+agent-core = { path = "../core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

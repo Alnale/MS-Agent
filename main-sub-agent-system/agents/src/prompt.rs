@@ -1,5 +1,5 @@
-use agent_teams_core::sub_agent::SubAgentDescriptor;
-use agent_teams_core::tool::UnifiedToolRegistry;
+use agent_core::sub_agent::SubAgentDescriptor;
+use agent_core::tool::UnifiedToolRegistry;
 
 /// Build system prompt for MainAgent task planning
 pub fn build_planning_prompt(sub_agents: &[SubAgentDescriptor]) -> String {
@@ -120,9 +120,6 @@ pub fn build_synthesis_prompt_with_quality_and_tools(
         prompt.push_str("- **docflow**: 文档格式转换工具。支持 DOC/DOCX→PDF、PDF→DOCX、PDF/DOC/DOCX→Markdown。\n");
         prompt.push_str("- **docreader**: 文档读取工具。读取 PDF/DOCX/DOC 文件的文本内容。\n");
         prompt.push_str("- **xxt**: 超星学习通自动答题工具。支持登录、爬取题目、填充答案、提交作业。\n");
-        prompt.push_str("- **http_request**: HTTP请求/网页搜索工具。支持GET/POST请求、多引擎搜索、网页内容抓取。\n");
-        prompt.push_str("- **http_get**: HTTP GET请求工具。\n");
-        prompt.push_str("- **http_post**: HTTP POST请求工具。\n");
         prompt.push_str("- **file**: 文件操作工具。支持读写、列目录、搜索、复制、移动等。\n");
         prompt.push_str("- **datetime**: 日期时间工具。支持获取时间、计算时差、格式化、时区转换。\n");
         prompt.push_str("- **media**: 媒体控制工具。支持图片/视频背景切换、音乐播放控制。\n");
@@ -139,12 +136,6 @@ pub fn build_synthesis_prompt_with_quality_and_tools(
     prompt.push_str("- 读取文档内容 → **docreader**\n");
     prompt.push_str("- 转换文档格式 → **docflow**\n");
     prompt.push_str("- 如需将文档转为文本再分析 → 先 **docflow**(to_markdown) → 再 **file(read)**\n\n");
-    prompt.push_str("### 网络请求\n");
-    prompt.push_str("- 简单GET请求 → **http_get**\n");
-    prompt.push_str("- 简单POST请求 → **http_post**\n");
-    prompt.push_str("- 搜索信息（用户说「搜/查/找/search/look up」）→ **http_request(search=\"关键词\")** ⚠️ 必须用 search 参数，不要用 url！\n");
-    prompt.push_str("- 访问指定URL → **http_request(url=\"完整URL\")**\n");
-    prompt.push_str("- 批量请求 → **http_request(urls=[...])**\n\n");
     prompt.push_str("### 时间判断（重要）\n");
     prompt.push_str("- 涉及「今年」「最近」「今天」「去年」「2024年」等时间词 → 必须先 datetime(now) 确认当前时间\n");
     prompt.push_str("- 不要假设当前时间，用工具确认后再回答\n\n");
@@ -156,11 +147,9 @@ pub fn build_synthesis_prompt_with_quality_and_tools(
     prompt.push_str("- 播放音乐 → **media**(import_and_play_music 或 play_music)\n");
     prompt.push_str("- 查找本地媒体文件 → **file**(list/glob) → **media**(import)\n\n");
     prompt.push_str("## 常见工具链模式\n");
-    prompt.push_str("1. **下载→保存→处理**: http_request → file(write) → docreader/docflow/media\n");
-    prompt.push_str("2. **搜索→提取→使用**: http_request(search) → 提取关键信息 → 传给其他工具\n");
-    prompt.push_str("3. **文档→转换→读取**: docflow(to_markdown) → file(read)\n");
-    prompt.push_str("4. **查找→导入→使用**: file(list/glob) → media(import) → 设置背景/播放\n");
-    prompt.push_str("5. **学习通答题**: xxt(crawl) → 自身知识生成答案 → xxt(fill) → xxt(submit)\n\n");
+    prompt.push_str("1. **文档→转换→读取**: docflow(to_markdown) → file(read)\n");
+    prompt.push_str("2. **查找→导入→使用**: file(list/glob) → media(import) → 设置背景/播放\n");
+    prompt.push_str("3. **学习通答题**: xxt(crawl) → 自身知识生成答案 → xxt(fill) → xxt(submit)\n\n");
 
     prompt.push_str("## 整合原则\n");
     prompt.push_str("1. **你的判断权重最大**：你是最终权威，Sub Agent 的结果是参考输入。如果你的判断与 Sub Agent 结果冲突，以你的判断为准\n");

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use agent_teams_core::agent_memory_cache::AgentMemoryCache;
-use agent_teams_core::memory_store::MemoryStore;
-use agent_teams_core::unified_memory_bus::{SharedMemoryCache, UnifiedMemoryBus};
+use agent_core::agent_memory_cache::AgentMemoryCache;
+use agent_core::memory_store::MemoryStore;
+use agent_core::unified_memory_bus::{SharedMemoryCache, UnifiedMemoryBus};
 
 use crate::plan_cache::PlanCache;
 use crate::sub_agent_cache::SubAgentCache;
@@ -145,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_cache_cross_agent_sync() {
-        use agent_teams_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
+        use agent_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
 
         let plan_cache = PlanCache::new(100, 300);
         let shared_cache = Arc::new(SharedMemoryCache::new(1000));

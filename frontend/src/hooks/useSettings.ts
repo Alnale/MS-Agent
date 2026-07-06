@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { LgConfig, LgCategory } from '../App';
+import { loadBool, loadNumber, loadString, loadFromStorage } from '../utils/storage';
 
 const LG_DEFAULTS: LgCategory = {
   enabled: false,
@@ -12,28 +13,6 @@ const LG_DEFAULTS: LgCategory = {
   elasticity: 0.15,
   cornerRadius: 999,
 };
-
-function loadFromStorage<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function loadString(key: string, fallback: string): string {
-  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
-}
-
-function loadNumber(key: string, fallback: number): number {
-  try { return parseFloat(localStorage.getItem(key) || String(fallback)); } catch { return fallback; }
-}
-
-function loadBool(key: string, fallback: boolean): boolean {
-  try { return localStorage.getItem(key) === 'true' ? true : fallback === true ? false : localStorage.getItem(key) === null ? fallback : false; } catch { return fallback; }
-}
 
 export function useSettings() {
   const [hideGlass, setHideGlass] = useState(() => loadBool('agent-teams-hide-glass', false));
@@ -61,19 +40,28 @@ export function useSettings() {
     };
   });
 
-  // Persist all settings
-  useEffect(() => { localStorage.setItem('agent-teams-hide-glass', String(hideGlass)); }, [hideGlass]);
-  useEffect(() => { localStorage.setItem('agent-teams-hide-welcome-prompt', String(hideWelcomePrompt)); }, [hideWelcomePrompt]);
-  useEffect(() => { localStorage.setItem('agent-teams-use-solid-bubble', String(useSolidBubble)); }, [useSolidBubble]);
-  useEffect(() => { localStorage.setItem('agent-teams-bubble-text-color', bubbleTextColor); }, [bubbleTextColor]);
-  useEffect(() => { localStorage.setItem('agent-teams-user-bubble-color', userBubbleColor); }, [userBubbleColor]);
-  useEffect(() => { localStorage.setItem('agent-teams-user-bubble-alpha', String(userBubbleAlpha)); }, [userBubbleAlpha]);
-  useEffect(() => { localStorage.setItem('agent-teams-assistant-bubble-color', assistantBubbleColor); }, [assistantBubbleColor]);
-  useEffect(() => { localStorage.setItem('agent-teams-assistant-bubble-alpha', String(assistantBubbleAlpha)); }, [assistantBubbleAlpha]);
-  useEffect(() => { localStorage.setItem('agent-teams-solid-user-bubble-color', solidUserBubbleColor); }, [solidUserBubbleColor]);
-  useEffect(() => { localStorage.setItem('agent-teams-solid-assistant-bubble-color', solidAssistantBubbleColor); }, [solidAssistantBubbleColor]);
-  useEffect(() => { localStorage.setItem('agent-teams-auto-text', String(autoTextEnabled)); }, [autoTextEnabled]);
-  useEffect(() => { localStorage.setItem('agent-teams-lg-config', JSON.stringify(lgConfig)); }, [lgConfig]);
+  // Batch-persist all settings in a debounced effect
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem('agent-teams-hide-glass', String(hideGlass));
+        localStorage.setItem('agent-teams-hide-welcome-prompt', String(hideWelcomePrompt));
+        localStorage.setItem('agent-teams-use-solid-bubble', String(useSolidBubble));
+        localStorage.setItem('agent-teams-bubble-text-color', bubbleTextColor);
+        localStorage.setItem('agent-teams-user-bubble-color', userBubbleColor);
+        localStorage.setItem('agent-teams-user-bubble-alpha', String(userBubbleAlpha));
+        localStorage.setItem('agent-teams-assistant-bubble-color', assistantBubbleColor);
+        localStorage.setItem('agent-teams-assistant-bubble-alpha', String(assistantBubbleAlpha));
+        localStorage.setItem('agent-teams-solid-user-bubble-color', solidUserBubbleColor);
+        localStorage.setItem('agent-teams-solid-assistant-bubble-color', solidAssistantBubbleColor);
+        localStorage.setItem('agent-teams-auto-text', String(autoTextEnabled));
+        localStorage.setItem('agent-teams-lg-config', JSON.stringify(lgConfig));
+      } catch {}
+    }, 300);
+    return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current); };
+  }, [hideGlass, hideWelcomePrompt, useSolidBubble, bubbleTextColor, userBubbleColor, userBubbleAlpha, assistantBubbleColor, assistantBubbleAlpha, solidUserBubbleColor, solidAssistantBubbleColor, autoTextEnabled, lgConfig]);
 
   const handleCompanionModeChange = useCallback((v: boolean) => {
     setCompanionMode(v);

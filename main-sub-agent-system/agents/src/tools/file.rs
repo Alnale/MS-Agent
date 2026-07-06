@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 /// Normalize a file path that may come from an LLM with various encoding issues.
 ///
@@ -126,7 +126,6 @@ impl ToolExecutor for FileTool {
                     "  mkdir — 创建目录（自动创建父目录）\n",
                     "  glob — 按模式匹配查找文件（需 pattern 参数，如 '*.rs' 或 '**/*.json'）\n\n",
                     "工具联动：\n",
-                    "- http_request/http_get 下载内容可用 write 保存\n",
                     "- write 写入的文件可作为 docflow/docreader/xxt 的输入\n",
                     "- list/glob 查找的媒体文件可用 media 导入\n",
                     "- read 读取的答案文件可传给 xxt fill",
@@ -276,7 +275,7 @@ impl FileTool {
         let end_line = call.arguments["end_line"].as_u64().map(|v| v as usize);
 
         let bytes = tokio::fs::read(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("IO错误: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("IO错误: {}", e)))?;
 
         let truncated: &[u8] = if bytes.len() > max_bytes { &bytes[..max_bytes] } else { &bytes };
         let content = String::from_utf8_lossy(truncated).to_string();
@@ -304,23 +303,23 @@ impl FileTool {
     async fn execute_write(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let content = call.arguments["content"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("write 操作需要 content 参数".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("write 操作需要 content 参数".to_string()))?;
         let append = call.arguments["append"].as_bool().unwrap_or(false);
 
         if let Some(parent) = std::path::Path::new(path).parent() {
             tokio::fs::create_dir_all(parent).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("创建目录失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("创建目录失败: {}", e)))?;
         }
 
         if append {
             use tokio::io::AsyncWriteExt;
             let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(path).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("打开文件失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("打开文件失败: {}", e)))?;
             file.write_all(content.as_bytes()).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("写入失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("写入失败: {}", e)))?;
         } else {
             tokio::fs::write(path, content).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("写入失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("写入失败: {}", e)))?;
         }
 
         Ok(serde_json::json!({
@@ -352,7 +351,7 @@ impl FileTool {
     /// 获取文件信息
     async fn execute_info(&self, path: &str) -> Result<serde_json::Value> {
         let meta = tokio::fs::metadata(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("无法访问: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("无法访问: {}", e)))?;
 
         Ok(serde_json::json!({
             "path": path,
@@ -374,7 +373,7 @@ impl FileTool {
     async fn execute_delete(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let recursive = call.arguments["recursive"].as_bool().unwrap_or(false);
         let meta = tokio::fs::metadata(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("路径不存在: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("路径不存在: {}", e)))?;
 
         let result = if meta.is_dir() && recursive {
             tokio::fs::remove_dir_all(path).await
@@ -396,7 +395,7 @@ impl FileTool {
                 } else {
                     format!("IO错误: {}", e)
                 };
-                Err(agent_teams_core::error::AgentTeamsError::NotFound(details))
+                Err(agent_core::error::AgentTeamsError::NotFound(details))
             }
         }
     }
@@ -405,12 +404,12 @@ impl FileTool {
     async fn execute_search(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let pattern = call.arguments["pattern"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("search 操作需要 pattern 参数".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("search 操作需要 pattern 参数".to_string()))?;
         let context_lines = call.arguments["context_lines"].as_u64().unwrap_or(0) as usize;
         let case_sensitive = call.arguments["case_sensitive"].as_bool().unwrap_or(true);
 
         let content = tokio::fs::read_to_string(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("读取失败: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("读取失败: {}", e)))?;
 
         let lines: Vec<&str> = content.lines().collect();
         let mut matches = Vec::new();
@@ -460,28 +459,28 @@ impl FileTool {
     async fn execute_copy(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let raw_dest = call.arguments["dest"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("copy 操作需要 dest 参数".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("copy 操作需要 dest 参数".to_string()))?;
         let dest = normalize_path(raw_dest);
         let recursive = call.arguments["recursive"].as_bool().unwrap_or(false);
 
         let meta = tokio::fs::metadata(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("源路径不存在: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("源路径不存在: {}", e)))?;
 
         if meta.is_dir() {
             if recursive {
                 copy_dir_recursive(path, &dest).await?;
             } else {
-                return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                return Err(agent_core::error::AgentTeamsError::NotFound(
                     "复制目录需要 recursive=true 参数".to_string()
                 ));
             }
         } else {
             if let Some(parent) = std::path::Path::new(&dest).parent() {
                 tokio::fs::create_dir_all(parent).await
-                    .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
+                    .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
             }
             tokio::fs::copy(path, &dest).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("复制失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("复制失败: {}", e)))?;
         }
 
         Ok(serde_json::json!({
@@ -496,16 +495,16 @@ impl FileTool {
     async fn execute_move(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let raw_dest = call.arguments["dest"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("move 操作需要 dest 参数".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("move 操作需要 dest 参数".to_string()))?;
         let dest = normalize_path(raw_dest);
 
         if let Some(parent) = std::path::Path::new(&dest).parent() {
             tokio::fs::create_dir_all(parent).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
         }
 
         tokio::fs::rename(path, &dest).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("移动失败: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("移动失败: {}", e)))?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -517,7 +516,7 @@ impl FileTool {
     /// 创建目录
     async fn execute_mkdir(&self, path: &str) -> Result<serde_json::Value> {
         tokio::fs::create_dir_all(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("创建目录失败: {}", e)))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("创建目录失败: {}", e)))?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -530,7 +529,7 @@ impl FileTool {
     async fn execute_glob(&self, call: &ToolCall, path: &str) -> Result<serde_json::Value> {
         let pattern = call.arguments["pattern"]
             .as_str()
-            .ok_or_else(|| agent_teams_core::error::AgentTeamsError::NotFound("glob 操作需要 pattern 参数".to_string()))?;
+            .ok_or_else(|| agent_core::error::AgentTeamsError::NotFound("glob 操作需要 pattern 参数".to_string()))?;
         let max_depth = call.arguments["max_depth"].as_u64().unwrap_or(5) as usize;
         let show_hidden = call.arguments["show_hidden"].as_bool().unwrap_or(false);
 
@@ -566,7 +565,7 @@ async fn list_directory(
     let mut dir = tokio::fs::read_dir(path).await
         .map_err(|e| {
             tracing::error!(path = %path, error = %e, "list_directory: failed to read directory");
-            agent_teams_core::error::AgentTeamsError::NotFound(format!("读取目录失败: {}", e))
+            agent_core::error::AgentTeamsError::NotFound(format!("读取目录失败: {}", e))
         })?;
 
     loop {
@@ -622,10 +621,10 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 /// Helper: copy directory recursively
 async fn copy_dir_recursive(src: &str, dest: &str) -> Result<()> {
     tokio::fs::create_dir_all(dest).await
-        .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
+        .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("创建目标目录失败: {}", e)))?;
 
     let mut dir = tokio::fs::read_dir(src).await
-        .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("读取源目录失败: {}", e)))?;
+        .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("读取源目录失败: {}", e)))?;
 
     loop {
         let entry = match dir.next_entry().await {
@@ -653,7 +652,7 @@ async fn copy_dir_recursive(src: &str, dest: &str) -> Result<()> {
             Box::pin(copy_dir_recursive(&src_path, &dest_path)).await?;
         } else {
             tokio::fs::copy(&src_path, &dest_path).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(format!("复制文件失败: {}", e)))?;
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(format!("复制文件失败: {}", e)))?;
         }
     }
     Ok(())

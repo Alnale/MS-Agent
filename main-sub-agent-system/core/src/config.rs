@@ -99,6 +99,7 @@ pub struct MainAgentConfig {
 pub struct ProvidersConfig {
     pub anthropic: Option<ProviderConfig>,
     pub openai: Option<ProviderConfig>,
+    pub openai_responses: Option<ProviderConfig>,
     pub ollama: Option<ProviderConfig>,
 }
 

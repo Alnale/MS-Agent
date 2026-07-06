@@ -204,7 +204,7 @@ export const MediaLibraryPanel = memo(function MediaLibraryPanel({
             return (
               <div key={folderName} className={`media-lib-folder${isCollapsed ? ' collapsed' : ''}`}>
                 {sortedFolders.length > 1 && (
-                  <div className="media-lib-folder-header" onClick={() => toggleFolder(folderName)}>
+                  <div className="media-lib-folder-header" onClick={() => toggleFolder(folderName)} role="button" tabIndex={0} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFolder(folderName); } }}>
                     <svg className={`media-lib-folder-arrow${isCollapsed ? '' : ' expanded'}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="9 18 15 12 9 6" />
                     </svg>
@@ -270,12 +270,15 @@ interface CardProps {
 }
 
 // Music item row component (compact list style)
-function MusicItemRow({ item, selected, onClick, onRemove }: Omit<CardProps, 'type' | 'getUrl'>) {
+const MusicItemRow = memo(function MusicItemRow({ item, selected, onClick, onRemove }: Omit<CardProps, 'type' | 'getUrl'>) {
   return (
     <div
       className={`media-lib-row${selected ? ' selected' : ''}`}
       onClick={onClick}
       title={`${item.name}\n${fmtSize(item.size)}`}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
     >
       <div className="media-lib-row-info">
         <span className="media-lib-row-name">{item.name}</span>
@@ -296,9 +299,9 @@ function MusicItemRow({ item, selected, onClick, onRemove }: Omit<CardProps, 'ty
       )}
     </div>
   );
-}
+});
 
-function MediaItemCard({ item, selected, type, onClick, onRemove }: CardProps) {
+const MediaItemCard = memo(function MediaItemCard({ item, selected, type, onClick, onRemove }: CardProps) {
   // For music type, use the compact row layout
   if (type === 'music') {
     return <MusicItemRow item={item} selected={selected} onClick={onClick} onRemove={onRemove} />;
@@ -394,7 +397,7 @@ function MediaItemCard({ item, selected, type, onClick, onRemove }: CardProps) {
       <div className="media-lib-card-thumb">
         {type === 'video' ? (
           <>
-            {thumbUrl && <img className="media-lib-video-poster" src={thumbUrl} alt="" />}
+            {thumbUrl && <img className="media-lib-video-poster" src={thumbUrl} alt={item.name} />}
             <video
               ref={videoRef}
               muted
@@ -403,7 +406,7 @@ function MediaItemCard({ item, selected, type, onClick, onRemove }: CardProps) {
             />
           </>
         ) : thumbUrl ? (
-          <img src={thumbUrl} alt="" />
+          <img src={thumbUrl} alt={item.name} />
         ) : (
           <div className="media-lib-card-placeholder" />
         )}
@@ -429,4 +432,4 @@ function MediaItemCard({ item, selected, type, onClick, onRemove }: CardProps) {
       )}
     </div>
   );
-}
+});

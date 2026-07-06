@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { PresetDef, CustomPreset } from '../api/types';
 
 type AnyPreset = PresetDef | CustomPreset;
@@ -50,11 +50,11 @@ export function usePreset(baseUrl: string) {
     localStorage.setItem(SESSION_PRESETS_KEY, JSON.stringify(sessionPresets));
   }, [sessionPresets]);
 
-  const allPresets: AnyPreset[] = [...builtinPresets, ...customPresets];
+  const allPresets = useMemo<AnyPreset[]>(() => [...builtinPresets, ...customPresets], [builtinPresets, customPresets]);
 
-  const activePreset = allPresets.find(p => p.id === activePresetId) ?? null;
+  const activePreset = useMemo(() => allPresets.find(p => p.id === activePresetId) ?? null, [allPresets, activePresetId]);
 
-  const systemInstructions = activePreset?.system_instructions ?? [];
+  const systemInstructions = useMemo(() => activePreset?.system_instructions ?? [], [activePreset]);
 
   /** Bind a session to a preset */
   const setSessionPreset = useCallback((sessionId: string, presetId: string | null) => {

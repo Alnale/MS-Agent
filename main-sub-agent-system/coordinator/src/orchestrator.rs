@@ -1,12 +1,12 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use agent_teams_core::boxed_agent::{AgentInput, AgentOutput, ToolInfo};
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::plan::{ArgumentSource, PlanExecutionState, PlanNode};
-use agent_teams_core::registry::AgentRegistry;
-use agent_teams_core::tool::{ToolCall, UnifiedToolRegistry};
+use agent_core::boxed_agent::{AgentInput, AgentOutput, ToolInfo};
+use agent_core::context::AgentContext;
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::plan::{ArgumentSource, PlanExecutionState, PlanNode};
+use agent_core::registry::AgentRegistry;
+use agent_core::tool::{ToolCall, UnifiedToolRegistry};
 
 use crate::memory_manager::MemoryManager;
 
@@ -87,7 +87,7 @@ impl Orchestrator {
                     if !output.effects.is_empty() {
                         let tool_triggers: Vec<_> = output.effects.iter()
                             .filter_map(|e| match e {
-                                agent_teams_core::effect::AgentEffect::ToolTrigger {
+                                agent_core::effect::AgentEffect::ToolTrigger {
                                     tool_name, input, ..
                                 } => Some((tool_name.clone(), input.clone())),
                                 _ => None,
@@ -133,26 +133,26 @@ impl Orchestrator {
                                 // Clone the task_planner Arc for each concurrent call
                                 let planner = task_planner.clone();
                                 async move {
-                                    let tool_output = planner.run(tool_input).await;
-                                    serde_json::to_value(&tool_output).unwrap_or_default()
+                                    planner.run(tool_input).await
                                 }
                             }).collect();
 
-                            let tool_results = futures::future::join_all(tool_futures).await;
+                            let tool_results: Vec<AgentOutput> = futures::future::join_all(tool_futures).await;
 
                             // Sync tool outputs to memory
                             if let Some(mm) = &self.memory_manager {
-                                for result in &tool_results {
-                                    if let Ok(output) = serde_json::from_value::<AgentOutput>(result.clone()) {
-                                        self.sync_output_to_memory(mm, ctx, "task_planner", &output).await;
-                                    }
+                                for output in &tool_results {
+                                    self.sync_output_to_memory(mm, ctx, "task_planner", output).await;
                                 }
                             }
 
                             // Return combined result: agent output + tool results
+                            let tool_results_json: Vec<_> = tool_results.iter()
+                                .map(|o| serde_json::to_value(o).unwrap_or_default())
+                                .collect();
                             return Ok(serde_json::json!({
                                 "agent": serde_json::to_value(&output).unwrap_or_default(),
-                                "tool_results": tool_results,
+                                "tool_results": tool_results_json,
                             }));
                         }
                     }

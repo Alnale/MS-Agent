@@ -6,12 +6,12 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
 use agent_teams_agents::sub_agents::summary::quality_inspector::MemoryQualityInspector;
-use agent_teams_core::bus::{AgentBus, AgentEnvelope, AgentTarget, BusPayload};
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
-use agent_teams_core::memory_lifecycle::MemoryLifecycleManager;
-use agent_teams_core::memory_store::MemoryStore;
-use agent_teams_core::provider::LlmProvider;
+use agent_core::bus::{AgentBus, AgentEnvelope, AgentTarget, BusPayload};
+use agent_core::error::Result;
+use agent_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
+use agent_core::memory_lifecycle::MemoryLifecycleManager;
+use agent_core::memory_store::MemoryStore;
+use agent_core::provider::LlmProvider;
 
 use crate::compression_evaluator::CompressionEvaluator;
 
@@ -60,7 +60,7 @@ pub struct SummaryBackgroundService {
     /// Long-term memory store
     long_term: Arc<dyn MemoryStore>,
     /// Embedding provider
-    embedding_provider: Arc<dyn agent_teams_core::memory_store::EmbeddingProvider>,
+    embedding_provider: Arc<dyn agent_core::memory_store::EmbeddingProvider>,
     /// Quality evaluator
     evaluator: Arc<CompressionEvaluator>,
     /// Optional LLM provider for extraction (fallback when bus is unavailable)
@@ -81,7 +81,7 @@ impl SummaryBackgroundService {
     pub fn new(
         short_term: Arc<dyn MemoryStore>,
         long_term: Arc<dyn MemoryStore>,
-        embedding_provider: Arc<dyn agent_teams_core::memory_store::EmbeddingProvider>,
+        embedding_provider: Arc<dyn agent_core::memory_store::EmbeddingProvider>,
         evaluator: Arc<CompressionEvaluator>,
         config: SummaryServiceConfig,
     ) -> Self {
@@ -312,7 +312,7 @@ impl SummaryBackgroundService {
                     ..Default::default()
                 })
                 .await
-                .unwrap_or_else(|_| agent_teams_core::memory::MemoryRetrievalResult {
+                .unwrap_or_else(|_| agent_core::memory::MemoryRetrievalResult {
                     entries: Vec::new(),
                     total_available: 0,
                 });
@@ -387,7 +387,7 @@ impl SummaryBackgroundService {
                 tags: vec!["fact".to_string()],
                 source_agent: "summary_background".to_string(),
                 confirmed: true,
-                content_hash: Some(agent_teams_core::memory::compute_content_hash(fact)),
+                content_hash: Some(agent_core::memory::compute_content_hash(fact)),
                 confidence: 1.0,
                 parent_id: None,
                 version: 1,
@@ -454,7 +454,7 @@ impl SummaryBackgroundService {
                 ..Default::default()
             })
             .await
-            .unwrap_or_else(|_| agent_teams_core::memory::MemoryRetrievalResult {
+            .unwrap_or_else(|_| agent_core::memory::MemoryRetrievalResult {
                 entries: Vec::new(),
                 total_available: 0,
             });
@@ -474,7 +474,7 @@ impl SummaryBackgroundService {
                 ..Default::default()
             })
             .await
-            .unwrap_or_else(|_| agent_teams_core::memory::MemoryRetrievalResult {
+            .unwrap_or_else(|_| agent_core::memory::MemoryRetrievalResult {
                 entries: Vec::new(),
                 total_available: 0,
             });
@@ -819,7 +819,7 @@ impl SummaryBackgroundService {
 
     /// Basic compression without LLM (fallback)
     async fn compress_basic(&self, session_id: &str) -> Result<()> {
-        use agent_teams_core::memory::CompressionStrategy;
+        use agent_core::memory::CompressionStrategy;
 
         let facts = self
             .short_term
@@ -852,7 +852,7 @@ impl SummaryBackgroundService {
         dialogue: &str,
         llm: &Arc<dyn LlmProvider>,
     ) -> std::result::Result<(Vec<String>, String), String> {
-        use agent_teams_core::provider::{ChatMessage, CompletionRequest};
+        use agent_core::provider::{ChatMessage, CompletionRequest};
 
         let system = "你是一个记忆压缩助手。请从以下对话中：
 1. 提取关键事实（用户偏好、重要信息），每行一个事实
@@ -867,22 +867,11 @@ SUMMARY:
             .to_string();
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: dialogue.to_string(),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", dialogue.to_string())],
             max_tokens: Some(8192),
             temperature: Some(0.3),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         let resp = llm.complete(request).await.map_err(|e| e.to_string())?;
@@ -939,7 +928,7 @@ impl SummaryServiceHandle {
     /// Submit a compression task (non-blocking)
     pub async fn submit(&self, task: SummaryTask) -> Result<()> {
         self.sender.send(task).await.map_err(|_| {
-            agent_teams_core::error::AgentTeamsError::Internal(
+            agent_core::error::AgentTeamsError::Internal(
                 "Summary service channel closed".to_string(),
             )
         })

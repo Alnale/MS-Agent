@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 
 interface Props {
   onComplete: () => void;
   onMidpoint: () => void;
 }
 
-export function BgTransition({ onComplete, onMidpoint }: Props) {
+export const BgTransition = memo(function BgTransition({ onComplete, onMidpoint }: Props) {
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
 
   useEffect(() => {
@@ -47,4 +47,4 @@ export function BgTransition({ onComplete, onMidpoint }: Props) {
       <div className="bg-trans-particle bg-trans-particle-6" />
     </div>
   );
-}
+});

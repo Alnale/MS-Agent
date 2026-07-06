@@ -179,6 +179,7 @@ export const MusicPlayer = memo(function MusicPlayer({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const liveRaf = useRef(0);
   const idleRaf = useRef(0);
+  const playIntentRef = useRef(false); // Track if we intend to be playing
 
   useEffect(() => { try { localStorage.setItem('agent-teams-music-pinned', String(pinned)); } catch {} }, [pinned]);
 
@@ -251,7 +252,21 @@ export const MusicPlayer = memo(function MusicPlayer({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    if (musicPlaying && musicFile) a.play().catch(() => {}); else a.pause();
+    if (musicPlaying && musicFile) {
+      playIntentRef.current = true;
+      a.play().then(() => {
+        // Play succeeded - check if we still intend to play
+        if (!playIntentRef.current) {
+          a.pause();
+        }
+      }).catch(() => {
+        // Play failed (e.g., interrupted by pause) - ensure state matches
+        playIntentRef.current = false;
+      });
+    } else {
+      playIntentRef.current = false;
+      a.pause();
+    }
   }, [musicPlaying, musicFile]);
 
   useEffect(() => { if (audioRef.current) audioRef.current.volume = musicVolume; }, [musicVolume]);
@@ -260,6 +275,7 @@ export const MusicPlayer = memo(function MusicPlayer({
   const onTime = useCallback(() => { if (audioRef.current) setCurrentTime(audioRef.current.currentTime); }, []);
   const onMeta = useCallback(() => { if (audioRef.current) setDuration(audioRef.current.duration); }, []);
   const handleEnded = useCallback(() => {
+    playIntentRef.current = false;
     if (playlist.length > 1) onNext();
     else { setCurrentTime(0); if (audioRef.current) audioRef.current.currentTime = 0; }
   }, [playlist.length, onNext]);
@@ -408,7 +424,7 @@ export const MusicPlayer = memo(function MusicPlayer({
             </button>
             <div className="music-exp-ctrl-r">
               {hasFile && (
-                <button className="music-exp-ctrl-btn peach" onClick={() => { onFileChange(null); setCurrentTime(0); setDuration(0); if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; } }} title="移除" aria-label="移除">
+                <button className="music-exp-ctrl-btn peach" onClick={() => { playIntentRef.current = false; onFileChange(null); setCurrentTime(0); setDuration(0); if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; } }} title="移除" aria-label="移除">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                 </button>
               )}

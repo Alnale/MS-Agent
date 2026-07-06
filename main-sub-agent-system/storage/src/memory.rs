@@ -3,15 +3,15 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{
+use agent_core::error::Result;
+use agent_core::memory::{
     CompressionStrategy, MemoryEntry, MemoryKind, MemoryQuery, MemoryRelation, MemoryRelationType,
     MemoryRetrievalResult,
 };
-use agent_teams_core::memory_store::MemoryStore;
+use agent_core::memory_store::MemoryStore;
 
 /// Minimum interval between cleanup_expired runs
 const CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -28,14 +28,14 @@ pub struct InMemoryMemoryStore {
     relations: DashMap<String, MemoryRelation>,
     /// Inverted index: memory_id -> set of relation keys for O(1) get_related
     relation_index: DashMap<String, Vec<String>>,
-    /// Last time cleanup_expired ran
-    last_cleanup: Mutex<Instant>,
+    /// Last time cleanup_expired ran (epoch millis)
+    last_cleanup_epoch_ms: AtomicU64,
     /// Secondary index: kind -> set of entry IDs for O(1) kind-based lookups
     kind_index: DashMap<MemoryKind, HashSet<String>>,
     /// Secondary index: session_id -> set of entry IDs for O(1) session-based lookups
     session_index: DashMap<String, HashSet<String>>,
-    /// Hash index: content_hash -> entry_id for O(1) content hash lookups
-    hash_index: DashMap<String, String>,
+    /// Hash index: content_hash -> set of entry IDs for O(1) content hash lookups
+    hash_index: DashMap<String, HashSet<String>>,
 }
 
 impl InMemoryMemoryStore {
@@ -47,7 +47,12 @@ impl InMemoryMemoryStore {
             default_ttl_secs: 86400, // 24h default
             relations: DashMap::new(),
             relation_index: DashMap::new(),
-            last_cleanup: Mutex::new(Instant::now()),
+            last_cleanup_epoch_ms: AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ),
             kind_index: DashMap::new(),
             session_index: DashMap::new(),
             hash_index: DashMap::new(),
@@ -67,7 +72,10 @@ impl InMemoryMemoryStore {
                 .insert(entry.id.clone());
         }
         if let Some(ref hash) = entry.content_hash {
-            self.hash_index.insert(hash.clone(), entry.id.clone());
+            self.hash_index
+                .entry(hash.clone())
+                .or_default()
+                .insert(entry.id.clone());
         }
     }
 
@@ -82,7 +90,13 @@ impl InMemoryMemoryStore {
             }
         }
         if let Some(ref hash) = entry.content_hash {
-            self.hash_index.remove(hash);
+            if let Some(mut ids) = self.hash_index.get_mut(hash) {
+                ids.remove(&entry.id);
+                if ids.is_empty() {
+                    drop(ids);
+                    self.hash_index.remove(hash);
+                }
+            }
         }
     }
 
@@ -129,11 +143,15 @@ impl InMemoryMemoryStore {
     /// Remove expired entries from the store (throttled to once per CLEANUP_INTERVAL_SECS)
     fn cleanup_expired(&self) {
         {
-            let mut last = self.last_cleanup.lock().unwrap_or_else(|e| e.into_inner());
-            if last.elapsed().as_secs() < CLEANUP_INTERVAL_SECS {
+            let now_epoch_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let last = self.last_cleanup_epoch_ms.load(Ordering::Relaxed);
+            if now_epoch_ms.saturating_sub(last) < CLEANUP_INTERVAL_SECS * 1000 {
                 return;
             }
-            *last = Instant::now();
+            self.last_cleanup_epoch_ms.store(now_epoch_ms, Ordering::Relaxed);
         }
         let now = Instant::now();
         let expired: Vec<String> = self
@@ -157,51 +175,6 @@ impl InMemoryMemoryStore {
         }
     }
 
-    fn matches_query(entry: &MemoryEntry, query: &MemoryQuery) -> bool {
-        // Kind filter
-        if !query.kinds.is_empty() && !query.kinds.contains(&entry.kind) {
-            return false;
-        }
-        // Tag filter
-        if !query.tags.is_empty() && !query.tags.iter().any(|t| entry.tags.contains(t)) {
-            return false;
-        }
-        // Session filter
-        if let Some(ref sid) = query.session_id {
-            if entry.session_id.as_ref() != Some(sid) {
-                return false;
-            }
-        }
-        // User ID filter — check source_agent field or data JSON for user_id
-        if let Some(ref uid) = query.user_id {
-            let entry_user = entry
-                .data
-                .as_ref()
-                .and_then(|d| d.get("user_id"))
-                .and_then(|v| v.as_str());
-            if entry_user != Some(uid.as_str()) {
-                // Also allow if source_agent matches user_id pattern
-                if !entry.source_agent.contains(uid) {
-                    return false;
-                }
-            }
-        }
-        // Time filter
-        if let Some(since) = query.since {
-            if entry.created_at < since {
-                return false;
-            }
-        }
-        // Weight filter
-        if entry.weight < query.min_weight {
-            return false;
-        }
-        // Confirmed-only filter: exclude unverified agent outputs
-        if query.confirmed_only && !entry.confirmed {
-            return false;
-        }
-        true
-    }
 }
 
 impl Default for InMemoryMemoryStore {
@@ -244,13 +217,13 @@ impl MemoryStore for InMemoryMemoryStore {
             candidate_ids
                 .iter()
                 .filter_map(|id| self.entries.get(id).map(|e| e.value().clone()))
-                .filter(|e| Self::matches_query(e, &query))
+                .filter(|e| e.matches_query(&query))
                 .collect()
         } else {
             // Fallback to full scan
             self.entries
                 .iter()
-                .filter(|e| Self::matches_query(e.value(), &query))
+                .filter(|e| e.value().matches_query(&query))
                 .map(|e| e.value().clone())
                 .collect()
         };
@@ -552,20 +525,22 @@ impl MemoryStore for InMemoryMemoryStore {
         session_id: Option<&str>,
     ) -> Result<Option<MemoryEntry>> {
         // Use hash_index for O(1) lookup by content_hash
-        if let Some(entry_id) = self.hash_index.get(content_hash) {
-            if let Some(entry) = self.entries.get(entry_id.value()) {
-                let e = entry.value();
-                if e.kind == kind
-                    && (user_id.is_none()
-                        || e.data
-                            .as_ref()
-                            .and_then(|d| d.get("user_id"))
-                            .and_then(|v| v.as_str())
-                            == user_id)
-                    && (session_id.is_none()
-                        || e.session_id.as_deref() == session_id)
-                {
-                    return Ok(Some(e.clone()));
+        if let Some(entry_ids) = self.hash_index.get(content_hash) {
+            for entry_id in entry_ids.iter() {
+                if let Some(entry) = self.entries.get(entry_id) {
+                    let e = entry.value();
+                    if e.kind == kind
+                        && (user_id.is_none()
+                            || e.data
+                                .as_ref()
+                                .and_then(|d| d.get("user_id"))
+                                .and_then(|v| v.as_str())
+                                == user_id)
+                        && (session_id.is_none()
+                            || e.session_id.as_deref() == session_id)
+                    {
+                        return Ok(Some(e.clone()));
+                    }
                 }
             }
         }

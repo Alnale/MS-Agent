@@ -1,24 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
-use agent_teams_core::tool::{Tool, ToolCall, ToolResult};
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
+use agent_core::tool::{Tool, ToolCall, ToolResult};
+use agent_core::tool_param_infer::ConversationContext;
 use serde_json::Value;
-
-/// Parameter inference context extracted from conversation history
-#[derive(Debug, Clone, Default)]
-pub struct ConversationContext {
-    /// Extracted entities from conversation (e.g., city names, file paths, URLs)
-    pub entities: HashMap<String, Vec<String>>,
-    /// Recent tool call results for reference
-    pub recent_results: Vec<(String, Value)>,
-    /// User preferences mentioned in conversation
-    pub preferences: HashMap<String, String>,
-    /// Current topic/task context
-    pub topic: Option<String>,
-    /// Conversation history for pattern matching
-    pub conversation_history: Vec<String>,
-}
 
 /// Entity extractor using regex patterns
 struct EntityExtractor {
@@ -31,11 +17,11 @@ struct EntityExtractor {
 impl EntityExtractor {
     fn new() -> Self {
         Self {
-            url_pattern: regex::Regex::new(r"https?://[^\s]+").unwrap(),
+            url_pattern: regex::Regex::new(r"https?://[^\s]+").expect("valid regex"),
             // Matches: Unix paths (/home/...), Windows drive paths (C:\... or C:/...), and filenames with extensions
-            path_pattern: regex::Regex::new(r#"(?:[A-Za-z]:\\[\w\\.-]+)|(?:[A-Za-z]:/[\w/.-]+)|(?:/[\w.-]+)+|[\w.-]+\.[\w]+"#).unwrap(),
-            time_pattern: regex::Regex::new(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?").unwrap(),
-            number_pattern: regex::Regex::new(r"\d+").unwrap(),
+            path_pattern: regex::Regex::new(r#"(?:[A-Za-z]:\\[\w\\.-]+)|(?:[A-Za-z]:/[\w/.-]+)|(?:/[\w.-]+)+|[\w.-]+\.[\w]+"#).expect("valid regex"),
+            time_pattern: regex::Regex::new(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?").expect("valid regex"),
+            number_pattern: regex::Regex::new(r"\d+").expect("valid regex"),
         }
     }
 
@@ -256,36 +242,44 @@ impl ParameterInferrer {
         // 1. Rule-based inference (sorted by priority — higher priority rules applied first)
         let mut sorted_rules: Vec<&InferenceRule> = self.inference_rules.iter().collect();
         sorted_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
-        for param_name in &missing_params.clone() {
+        missing_params.retain(|param_name| {
             if let Some(inferred) = self.try_rule_inference_sorted(param_name, tool, context, &sorted_rules) {
                 args[param_name] = inferred;
-                missing_params.retain(|p| p != param_name);
+                false
+            } else {
+                true
             }
-        }
+        });
 
         // 2. Context-based inference (topic + recent tool results)
-        for param_name in &missing_params.clone() {
+        missing_params.retain(|param_name| {
             if let Some(inferred) = self.try_context_inference(param_name, tool, context) {
                 args[param_name] = inferred;
-                missing_params.retain(|p| p != param_name);
+                false
+            } else {
+                true
             }
-        }
+        });
 
         // 3. Tool history inference (cross-tool data flow from ReAct loop)
-        for param_name in &missing_params.clone() {
+        missing_params.retain(|param_name| {
             if let Some(inferred) = self.try_tool_history_inference(param_name, tool, tool_history) {
                 args[param_name] = inferred;
-                missing_params.retain(|p| p != param_name);
+                false
+            } else {
+                true
             }
-        }
+        });
 
         // 4. History-based inference
-        for param_name in &missing_params.clone() {
+        missing_params.retain(|param_name| {
             if let Some(inferred) = self.try_history_inference(param_name, context) {
                 args[param_name] = inferred;
-                missing_params.retain(|p| p != param_name);
+                false
+            } else {
+                true
             }
-        }
+        });
 
         // 4. LLM inference for remaining params
         if !missing_params.is_empty() {
@@ -530,16 +524,11 @@ impl ParameterInferrer {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
             messages: vec![ChatMessage::simple("user", &prompt)],
             max_tokens: Some(4096),
             temperature: Some(0.1),
             system: Some("你是一个参数推断助手。根据对话上下文推断缺失的工具参数。只返回JSON，不要解释。".to_string()),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -720,7 +709,10 @@ pub fn detect_preparatory_steps(
                             ),
                             suggested_args: serde_json::json!({
                                 "action": "write",
-                                "path": format!("/tmp/tool_input_{}.json", tool.name),
+                                "path": std::env::temp_dir()
+                                    .join(format!("tool_input_{}.json", tool.name))
+                                    .to_string_lossy()
+                                    .to_string(),
                                 "content": "<从上下文中提取的数据>"
                             }),
                             target_param: param_name.clone(),
@@ -743,10 +735,28 @@ pub struct PreparatoryStep {
     pub target_param: String,
 }
 
+#[async_trait::async_trait]
+impl agent_core::tool_param_infer::ParamInferrer for ParameterInferrer {
+    fn extract_context(&self, messages: &[ChatMessage]) -> ConversationContext {
+        self.extract_context(messages)
+    }
+
+    async fn infer_parameters_with_history(
+        &self,
+        tool: &Tool,
+        partial_args: &Value,
+        context: &ConversationContext,
+        messages: &[ChatMessage],
+        tool_history: &[(ToolCall, ToolResult)],
+    ) -> Value {
+        self.infer_parameters_with_history(tool, partial_args, context, messages, tool_history).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_teams_core::provider::ProviderError;
+    use agent_core::provider::ProviderError;
 
     #[test]
     fn test_extract_context_urls() {
@@ -788,7 +798,7 @@ mod tests {
     struct MockProvider;
 
     #[async_trait::async_trait]
-    impl agent_teams_core::provider::LlmProvider for MockProvider {
+    impl agent_core::provider::LlmProvider for MockProvider {
         fn id(&self) -> &str {
             "mock"
         }
@@ -801,14 +811,15 @@ mod tests {
             vec!["mock-model".to_string()]
         }
 
-        async fn complete(&self, _req: CompletionRequest) -> std::result::Result<agent_teams_core::provider::CompletionResponse, ProviderError> {
-            Ok(agent_teams_core::provider::CompletionResponse {
+        async fn complete(&self, _req: CompletionRequest) -> std::result::Result<agent_core::provider::CompletionResponse, ProviderError> {
+            Ok(agent_core::provider::CompletionResponse {
                 content: "{}".to_string(),
                 tool_calls: vec![],
                 thinking: None,
                 model: "mock-model".to_string(),
                 usage: Default::default(),
                 stop_reason: Some("stop".to_string()),
+                annotations: vec![],
             })
         }
 
@@ -816,7 +827,7 @@ mod tests {
             &self,
             _request: CompletionRequest,
         ) -> std::result::Result<
-            Box<dyn futures::Stream<Item = std::result::Result<agent_teams_core::provider::CompletionChunk, ProviderError>> + Unpin + Send>,
+            Box<dyn futures::Stream<Item = std::result::Result<agent_core::provider::CompletionChunk, ProviderError>> + Unpin + Send>,
             ProviderError,
         > {
             Err(ProviderError::Other("Mock provider does not support streaming".to_string()))

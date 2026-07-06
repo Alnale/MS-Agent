@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::context_provider::{ContextProvider, PromptFragment, PromptPriority};
+use agent_core::context::AgentContext;
+use agent_core::context_provider::{ContextProvider, PromptFragment, PromptPriority};
 
 use crate::memory_manager::MemoryManager;
 

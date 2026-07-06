@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, memo } from 'react';
 import mermaid from 'mermaid';
-import DOMPurify from 'dompurify';
+import { sanitizeSvg } from '../utils/sanitizer';
 import { copyToClipboard } from '../utils/clipboard';
 
 // Initialize mermaid once with a consistent config
@@ -51,7 +51,7 @@ const CheckIcon = () => (
   </svg>
 );
 
-export function MermaidDiagram({ code, id }: Props) {
+export const MermaidDiagram = memo(function MermaidDiagram({ code, id }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [svg, setSvg] = useState<string | null>(null);
@@ -65,7 +65,7 @@ export function MermaidDiagram({ code, id }: Props) {
       try {
         const { svg: renderedSvg } = await mermaid.render(id, code);
         if (!cancelled) {
-          setSvg(DOMPurify.sanitize(renderedSvg, { USE_PROFILES: { svg: true, svgFilters: true } }));
+          setSvg(sanitizeSvg(renderedSvg));
           setError(null);
         }
       } catch (err) {
@@ -130,4 +130,4 @@ export function MermaidDiagram({ code, id }: Props) {
       />
     </div>
   );
-}
+});

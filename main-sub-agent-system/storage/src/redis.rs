@@ -3,9 +3,9 @@ use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, RedisError};
 use serde_json::Value;
 
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::state::{ApplyResult, StateStore};
+use agent_core::effect::AgentEffect;
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::state::{ApplyResult, StateStore};
 
 /// Redis-backed state store
 pub struct RedisStateStore {
@@ -109,21 +109,23 @@ impl StateStore for RedisStateStore {
                     applied += 1;
                 }
                 AgentEffect::NumericChange { field, delta, .. } => {
-                    // Read current value, compute new, write back
+                    // INCRBYFLOAT is atomic in Redis — avoids the lost-update
+                    // race where two concurrent requests both read the same
+                    // baseline value and one delta is silently dropped. The
+                    // previous code did `GET ... await ... SET` which yielded
+                    // between the read and the write. Stores a plain numeric
+                    // string (e.g. "42.5") which serde_json parses back into
+                    // Value::Number on get(), preserving the prior format.
+                    //
+                    // Executed as a standalone command (not in the pipeline)
+                    // because redis 0.27's Pipeline doesn't expose incr_by_float.
                     let redis_key = Self::state_key(field);
-                    let current: Option<String> = conn.get(&redis_key).await.map_err(|e| {
-                        AgentTeamsError::StateStoreError(e.to_string())
-                    })?;
-
-                    let current_num = current
-                        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
-
-                    let new_value = serde_json::json!(current_num + delta);
-                    let json_str = serde_json::to_string(&new_value)
+                    let _: f64 = redis::cmd("INCRBYFLOAT")
+                        .arg(&redis_key)
+                        .arg(*delta)
+                        .query_async(&mut conn)
+                        .await
                         .map_err(|e| AgentTeamsError::StateStoreError(e.to_string()))?;
-                    pipe.set(&redis_key, &json_str).ignore();
                     pipe.sadd("state_keys", field).ignore();
                     applied += 1;
                 }

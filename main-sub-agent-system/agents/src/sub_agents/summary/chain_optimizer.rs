@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::MemoryEntry;
-use agent_teams_core::memory_store::MemoryStore;
+use agent_core::error::Result;
+use agent_core::memory::MemoryEntry;
+use agent_core::memory_store::MemoryStore;
 
 /// Result of a chain optimization operation
 #[derive(Debug)]
@@ -82,7 +82,7 @@ impl SummaryChainOptimizer {
             let merged_entry = MemoryEntry {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id: Some(session_id.to_string()),
-                kind: agent_teams_core::memory::MemoryKind::Summary,
+                kind: agent_core::memory::MemoryKind::Summary,
                 content: combined_content,
                 data: Some(serde_json::json!({
                     "merged_from": group.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),

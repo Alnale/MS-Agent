@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import type { AgentProgress } from '../api/types';
 
 interface Props {
@@ -62,7 +62,7 @@ function buildAgentList(progress: AgentProgress[]) {
   return agents;
 }
 
-export function ThinkingIndicator({ startTime, agentProgress }: Props) {
+export const ThinkingIndicator = memo(function ThinkingIndicator({ startTime, agentProgress }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -143,4 +143,4 @@ export function ThinkingIndicator({ startTime, agentProgress }: Props) {
       )}
     </div>
   );
-}
+});

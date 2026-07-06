@@ -52,6 +52,10 @@ pub struct AgentOutput {
     /// MainAgent synthesis uses this for richer context without redundant LLM calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Annotations from the LLM response (e.g., web search citations).
+    /// Propagated to the frontend for displaying source links.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<serde_json::Value>,
 }
 
 impl Default for AgentOutput {
@@ -63,6 +67,7 @@ impl Default for AgentOutput {
             quality: 1.0,
             status: AgentStatus::Success,
             metadata: None,
+            annotations: Vec::new(),
         }
     }
 }

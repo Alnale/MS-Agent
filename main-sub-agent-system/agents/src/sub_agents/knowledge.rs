@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agent_teams_core::agent_memory_cache::AgentMemoryCache;
-use agent_teams_core::boxed_agent::{
+use agent_core::agent_memory_cache::AgentMemoryCache;
+use agent_core::boxed_agent::{
     AgentCapabilities, AgentInput, AgentOutput, BoxedAgent, MemoryAwareAgent,
 };
-use agent_teams_core::memory::{MemoryKind, MemoryQuery};
-use agent_teams_core::memory_store::MemoryStore;
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider, ThinkingConfig};
+use agent_core::memory::{MemoryKind, MemoryQuery};
+use agent_core::memory_store::MemoryStore;
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider, ThinkingConfig};
 
 /// Knowledge SubAgent: dedicated knowledge base query agent.
 ///
@@ -173,22 +173,12 @@ impl BoxedAgent for KnowledgeSubAgent {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: input.content.clone(),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", &input.content)],
             max_tokens: Some(self.max_tokens),
             temperature: Some(0.3),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking: self.thinking_config.clone(),
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -222,10 +212,10 @@ impl MemoryAwareAgent for KnowledgeSubAgent {
         store: &Arc<dyn MemoryStore>,
         session_id: &str,
         output: &AgentOutput,
-    ) -> agent_teams_core::error::Result<()> {
+    ) -> agent_core::error::Result<()> {
         // Cache knowledge query results for future reference
         if !output.content.is_empty() && output.quality > 0.5 {
-            let entry = agent_teams_core::memory::MemoryEntry {
+            let entry = agent_core::memory::MemoryEntry {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id: Some(session_id.to_string()),
                 kind: MemoryKind::AgentOutput,
@@ -239,7 +229,7 @@ impl MemoryAwareAgent for KnowledgeSubAgent {
                 tags: vec!["knowledge_result".to_string()],
                 source_agent: "knowledge".to_string(),
                 confirmed: false,
-                content_hash: Some(agent_teams_core::memory::compute_content_hash(
+                content_hash: Some(agent_core::memory::compute_content_hash(
                     &output.content,
                 )),
                 confidence: 0.7,

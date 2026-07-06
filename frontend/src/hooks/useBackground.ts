@@ -3,18 +3,10 @@ import {
   loadBgImage, saveBgImage, removeBgImage,
   loadBgVideo, saveBgVideo, removeBgVideo,
 } from '../utils/bgStorage';
+import { loadNumber } from '../utils/storage';
 
 const BG_OPACITY_KEY = 'agent-teams-bg-opacity';
 const BG_BLUR_KEY = 'agent-teams-bg-blur';
-
-function loadNumber(key: string, fallback: number): number {
-  try {
-    const val = localStorage.getItem(key);
-    return val ? parseFloat(val) : fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export interface UseBackgroundReturn {
   bgImage: string | null;
@@ -83,16 +75,27 @@ export function useBackground(): UseBackgroundReturn {
   }, []);
 
   // Cleanup object URLs on change or unmount to prevent memory leaks
-  const prevBlobUrlRef = useRef<string | null>(null);
+  const prevVideoBlobUrlRef = useRef<string | null>(null);
   useEffect(() => {
-    const prev = prevBlobUrlRef.current;
-    prevBlobUrlRef.current = bgVideo;
+    const prev = prevVideoBlobUrlRef.current;
+    prevVideoBlobUrlRef.current = bgVideo;
     return () => {
       if (prev && prev.startsWith('blob:')) {
         URL.revokeObjectURL(prev);
       }
     };
   }, [bgVideo]);
+
+  const prevImageBlobUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevImageBlobUrlRef.current;
+    prevImageBlobUrlRef.current = bgImage;
+    return () => {
+      if (prev && prev.startsWith('blob:')) {
+        URL.revokeObjectURL(prev);
+      }
+    };
+  }, [bgImage]);
 
   const setBgImage = useCallback((image: string | null) => {
     setBgImageState(image);

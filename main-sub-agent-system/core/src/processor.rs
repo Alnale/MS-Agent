@@ -3,12 +3,12 @@ use std::sync::OnceLock;
 
 fn system_tag_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[\[[\w:]+(?:\|[^\]]*)?\]\]").unwrap())
+    RE.get_or_init(|| Regex::new(r"\[\[[\w:]+(?:\|[^\]]*)?\]\]").expect("valid regex"))
 }
 
 fn tool_call_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[\[tool:(\w+)(?:\|([^\]]*))?\]\]").unwrap())
+    RE.get_or_init(|| Regex::new(r"\[\[tool:(\w+)(?:\|([^\]]*))?\]\]").expect("valid regex"))
 }
 
 /// Strip tool call tags from text: [[tool:name|{json}]]

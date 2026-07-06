@@ -1,25 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
+import { loadBool, loadNumber } from '../utils/storage';
 
 const MUSIC_VOLUME_KEY = 'agent-teams-music-volume';
 const MUSIC_MUTED_KEY = 'agent-teams-music-muted';
 const MUSIC_FILE_KEY = 'agent-teams-music-file';
-
-function loadNumber(key: string, fallback: number): number {
-  try {
-    const val = localStorage.getItem(key);
-    return val ? parseFloat(val) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function loadBool(key: string, fallback: boolean): boolean {
-  try {
-    return localStorage.getItem(key) === 'true';
-  } catch {
-    return fallback;
-  }
-}
 
 export interface UseMusicReturn {
   musicPlaying: boolean;

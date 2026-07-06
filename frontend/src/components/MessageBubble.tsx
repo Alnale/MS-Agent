@@ -1,4 +1,4 @@
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import type { ChatMessage, AgentProgress } from '../api/types';
 import { AgentMessageBubble } from './AgentMessageBubble';
 import { copyToClipboard, escapeHtml } from '../utils/clipboard';
@@ -20,7 +20,7 @@ export const MessageBubble = memo(function MessageBubble({ message, onResend, qu
   }
 
   // User messages: always escape from raw content (never use renderedHtml which is for assistant messages)
-  const html = message.content ? escapeHtml(message.content).replace(/\n/g, '<br>') : '';
+  const html = useMemo(() => message.content ? escapeHtml(message.content).replace(/\n/g, '<br>') : '', [message.content]);
 
   const handleCopy = useCallback(async () => {
     if (!message.content) return;

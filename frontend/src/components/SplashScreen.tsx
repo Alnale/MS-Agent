@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 
-export function SplashScreen({ onComplete }: { onComplete: () => void }) {
+export const SplashScreen = memo(function SplashScreen({ onComplete }: { onComplete: () => void }) {
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
   const [ready, setReady] = useState(false);
   const [strokeLen, setStrokeLen] = useState(0);
@@ -79,4 +79,6 @@ export function SplashScreen({ onComplete }: { onComplete: () => void }) {
       <div className="splash-sparkle splash-sparkle-5" />
     </div>
   );
-}
+});
+
+export default SplashScreen;

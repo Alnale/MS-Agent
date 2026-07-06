@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{MemoryEntry, MemoryQuery, MemoryRetrievalResult};
-use agent_teams_core::memory_store::MemoryStore;
+use agent_core::error::Result;
+use agent_core::memory::{MemoryEntry, MemoryQuery, MemoryRetrievalResult};
+use agent_core::memory_store::MemoryStore;
 use async_trait::async_trait;
 
 /// Metrics collector for memory system observability
@@ -200,7 +200,7 @@ impl MemoryStore for InstrumentedMemoryStore {
     async fn compress(
         &self,
         session_id: &str,
-        strategy: agent_teams_core::memory::CompressionStrategy,
+        strategy: agent_core::memory::CompressionStrategy,
     ) -> Result<Vec<MemoryEntry>> {
         self.metrics.record_compression();
         self.inner.compress(session_id, strategy).await
@@ -222,22 +222,22 @@ impl MemoryStore for InstrumentedMemoryStore {
         self.inner.delete(id).await
     }
 
-    async fn add_relation(&self, relation: agent_teams_core::memory::MemoryRelation) -> Result<()> {
+    async fn add_relation(&self, relation: agent_core::memory::MemoryRelation) -> Result<()> {
         self.inner.add_relation(relation).await
     }
 
     async fn get_related(
         &self,
         memory_id: &str,
-        relation_type: Option<agent_teams_core::memory::MemoryRelationType>,
-    ) -> Result<Vec<agent_teams_core::memory::MemoryRelation>> {
+        relation_type: Option<agent_core::memory::MemoryRelationType>,
+    ) -> Result<Vec<agent_core::memory::MemoryRelation>> {
         self.inner.get_related(memory_id, relation_type).await
     }
 
     async fn store_with_relations(
         &self,
         entry: MemoryEntry,
-        relations: Vec<agent_teams_core::memory::MemoryRelation>,
+        relations: Vec<agent_core::memory::MemoryRelation>,
     ) -> Result<()> {
         self.metrics.record_store();
         self.inner.store_with_relations(entry, relations).await

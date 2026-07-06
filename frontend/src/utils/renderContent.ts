@@ -1,9 +1,27 @@
-import katex from 'katex';
 import { escapeHtml } from './clipboard';
+import DOMPurify from './sanitizer';
 
-function renderLatex(latex: string, displayMode: boolean): string {
+// Lazy-loaded katex reference (avoids ~300KB in initial bundle)
+let katexModule: typeof import('katex') | null = null;
+let katexLoadPromise: Promise<typeof import('katex')> | null = null;
+
+async function ensureKatex(): Promise<typeof import('katex')> {
+  if (katexModule) return katexModule;
+  if (!katexLoadPromise) {
+    katexLoadPromise = import('katex').then(m => { katexModule = m.default; return m.default; });
+  }
+  return katexLoadPromise;
+}
+
+// Synchronous cache for already-loaded katex (fast path for repeated renders)
+function renderLatexSync(latex: string, displayMode: boolean): string {
+  if (!katexModule) {
+    // Trigger async load; return fallback for first render
+    ensureKatex();
+    return escapeHtml(displayMode ? `$$${latex}$$` : `$${latex}$`);
+  }
   try {
-    return katex.renderToString(latex, {
+    return katexModule.renderToString(latex, {
       displayMode,
       throwOnError: false,
       trust: false,
@@ -151,8 +169,14 @@ function extractTableBlocks(text: string): { type: 'table' | 'text'; content: st
   return segments;
 }
 
-/** Counter for unique mermaid block IDs */
-let mermaidCounter = 0;
+/** Generate a deterministic short hash for mermaid block IDs */
+function hashContent(str: string): string {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36);
+}
 
 export function renderContent(content: string): string {
   if (!content) return '';
@@ -195,7 +219,7 @@ export function renderContent(content: string): string {
   for (const preSeg of preSegments) {
     if (preSeg.codeBlock) {
       if (preSeg.lang === 'mermaid') {
-        const id = `mermaid-${++mermaidCounter}-${Date.now()}`;
+        const id = `mermaid-${hashContent(preSeg.latex!)}`;
         const encoded = preSeg.latex!.trim();
         parts.push(
           `<div class="mermaid-block" data-mermaid-id="${id}">${escapeHtml(encoded)}</div>`
@@ -241,7 +265,7 @@ export function renderContent(content: string): string {
 
     for (const seg of segments) {
       if (seg.latex !== undefined && seg.displayMode) {
-        parts.push(`<div class="math-block">${renderLatex(seg.latex, true)}</div>`);
+        parts.push(`<div class="math-block">${renderLatexSync(seg.latex, true)}</div>`);
       } else {
         // Phase 2: Extract and render tables (line-by-line scan, works without blank-line separation)
         const tableBlocks = extractTableBlocks(seg.text);
@@ -259,7 +283,7 @@ export function renderContent(content: string): string {
               if (inlineMatch.index > inlineLastIndex) {
                 parts.push(renderInlineMarkdown(text.slice(inlineLastIndex, inlineMatch.index)));
               }
-              parts.push(`<span class="math-inline">${renderLatex(inlineMatch[1], false)}</span>`);
+              parts.push(`<span class="math-inline">${renderLatexSync(inlineMatch[1], false)}</span>`);
               inlineLastIndex = inlineMatch.index + inlineMatch[0].length;
             }
             if (inlineLastIndex < text.length) {
@@ -272,10 +296,16 @@ export function renderContent(content: string): string {
   }
 
   // Convert newlines to <br> (but not inside math/code/table/mermaid blocks)
-  return parts
+  const raw = parts
     .map((p) => {
       if (p.includes('math-block') || p.includes('math-inline') || p.includes('code-block') || p.includes('table-wrapper') || p.includes('mermaid-block')) return p;
       return p.replace(/\n/g, '<br>');
     })
     .join('');
+
+  // Defense-in-depth: sanitize final HTML with DOMPurify
+  return DOMPurify.sanitize(raw, {
+    ADD_TAGS: ['iframe'],
+    ADD_ATTR: ['target', 'rel', 'data-copy-content', 'data-copy-btn', 'data-mermaid-id', 'data-preview-btn', 'data-copy-content'],
+  });
 }

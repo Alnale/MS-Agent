@@ -2,32 +2,32 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agent_teams_core::agent_memory_cache::AgentMemoryCache;
-use agent_teams_core::boxed_agent::AgentCapabilities;
-use agent_teams_core::domain::DomainModule;
-use agent_teams_core::provider::LlmProvider;
-use agent_teams_core::registry::AgentRegistry;
-use agent_teams_core::routing::{
+use agent_core::agent_memory_cache::AgentMemoryCache;
+use agent_core::boxed_agent::AgentCapabilities;
+use agent_core::domain::DomainModule;
+use agent_core::provider::LlmProvider;
+use agent_core::registry::AgentRegistry;
+use agent_core::routing::{
     RouteCondition, RouteMode, RouteTarget, RoutingRule, RoutingTable,
 };
-use agent_teams_core::sub_agent::SubAgentDescriptor;
-use agent_teams_core::tool::UnifiedToolRegistry;
+use agent_core::sub_agent::SubAgentDescriptor;
+use agent_core::tool::UnifiedToolRegistry;
 
 use crate::sub_agents::script_exec::ScriptDef;
 use crate::sub_agents::*;
 use crate::tool_engine::ToolExecutionEngine;
 use crate::tool_param_infer::ParameterInferrer;
-use crate::tools::{DateTimeTool, FileTool, HttpToolExecutor, XxtToolExecutor, DocFlowTool, DocReaderTool, MediaTool};
+use crate::tools::{DateTimeTool, FileTool, XxtToolExecutor, DocFlowTool, DocReaderTool, MediaTool, WebSearchTool};
 
 fn register_all_executors(tool_reg: &UnifiedToolRegistry) {
-    tool_reg.register_executor(Arc::new(HttpToolExecutor::new()));
     tool_reg.register_executor(Arc::new(DateTimeTool::new()));
     tool_reg.register_executor(Arc::new(FileTool::new()));
     tool_reg.register_executor(Arc::new(XxtToolExecutor::new()));
     tool_reg.register_executor(Arc::new(DocFlowTool::new()));
     tool_reg.register_executor(Arc::new(DocReaderTool::new()));
     tool_reg.register_executor(Arc::new(MediaTool::new()));
-    tracing::info!("Registered dedicated xxt, docflow, docreader, and media tool executors");
+    tool_reg.register_executor(Arc::new(WebSearchTool::new()));
+    tracing::info!("Registered dedicated xxt, docflow, docreader, media, and web_search tool executors");
 
     let mut script_exec = ScriptToolExecutor::new();
     let tools_dir = std::env::current_dir().unwrap_or_default().join("tools");
@@ -97,7 +97,7 @@ fn register_all_executors(tool_reg: &UnifiedToolRegistry) {
 
 pub struct DomainModuleCS {
     tool_registry: Option<Arc<UnifiedToolRegistry>>,
-    sub_agents_config: std::collections::HashMap<String, agent_teams_core::config::SubAgentConfig>,
+    sub_agents_config: std::collections::HashMap<String, agent_core::config::SubAgentConfig>,
 }
 
 impl DomainModuleCS {
@@ -110,13 +110,13 @@ impl DomainModuleCS {
         self
     }
 
-    pub fn with_sub_agents_config(mut self, config: std::collections::HashMap<String, agent_teams_core::config::SubAgentConfig>) -> Self {
+    pub fn with_sub_agents_config(mut self, config: std::collections::HashMap<String, agent_core::config::SubAgentConfig>) -> Self {
         self.sub_agents_config = config;
         self
     }
 
     /// Get thinking config for a specific agent from the sub_agents config
-    fn thinking_config_for(&self, agent_id: &str) -> Option<agent_teams_core::provider::ThinkingConfig> {
+    fn thinking_config_for(&self, agent_id: &str) -> Option<agent_core::provider::ThinkingConfig> {
         self.sub_agents_config
             .get(agent_id)
             .and_then(|c| c.thinking.as_ref())
@@ -189,7 +189,7 @@ impl DomainModule for DomainModuleCS {
             register_all_executors(tool_reg);
             let engine = Arc::new(ToolExecutionEngine::new(tool_reg.clone()));
             task_planner = task_planner.with_unified_registry(tool_reg.clone());
-            task_planner = task_planner.with_tool_executor(Arc::new(HttpToolExecutor::new()));
+
             task_planner = task_planner.with_tool_engine(engine);
             task_planner = task_planner.with_param_inferrer(Arc::new(ParameterInferrer::new(provider.clone())));
         }
@@ -221,7 +221,7 @@ impl DomainModule for DomainModuleCS {
             register_all_executors(tool_reg);
             let engine = Arc::new(ToolExecutionEngine::new(tool_reg.clone()));
             task_planner = task_planner.with_unified_registry(tool_reg.clone());
-            task_planner = task_planner.with_tool_executor(Arc::new(HttpToolExecutor::new()));
+
             task_planner = task_planner.with_tool_engine(engine);
             task_planner = task_planner.with_param_inferrer(Arc::new(ParameterInferrer::new(provider.clone())));
         }

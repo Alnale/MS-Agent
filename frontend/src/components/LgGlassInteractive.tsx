@@ -7,6 +7,32 @@ interface Props {
   activationZone?: number;
 }
 
+// Shared mousemove listener registry — one global listener for all instances
+type Subscriber = (mouseX: number, mouseY: number) => void;
+const subscribers = new Set<Subscriber>();
+let globalListenerAttached = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+
+function ensureGlobalListener() {
+  if (globalListenerAttached) return;
+  globalListenerAttached = true;
+  const onMove = (e: globalThis.MouseEvent) => {
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    for (const sub of subscribers) {
+      sub(e.clientX, e.clientY);
+    }
+  };
+  document.addEventListener('mousemove', onMove, { passive: true });
+}
+
+function subscribe(cb: Subscriber): () => void {
+  ensureGlobalListener();
+  subscribers.add(cb);
+  return () => { subscribers.delete(cb); };
+}
+
 /**
  * Liquid glass mouse interactivity wrapper.
  * Adds elastic translation, directional scaling, and hover/active overlays
@@ -58,13 +84,12 @@ export function LgGlassInteractive({
   }, [elasticity, activationZone]);
 
   useEffect(() => {
-    const onMove = (e: globalThis.MouseEvent) => {
+    const unsub = subscribe((mx, my) => {
       cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => applyEffect(e.clientX, e.clientY));
-    };
-    document.addEventListener('mousemove', onMove, { passive: true });
+      rafRef.current = requestAnimationFrame(() => applyEffect(mx, my));
+    });
     return () => {
-      document.removeEventListener('mousemove', onMove);
+      unsub();
       cancelAnimationFrame(rafRef.current);
     };
   }, [applyEffect]);

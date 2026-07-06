@@ -106,6 +106,51 @@ pub struct MemoryEntry {
     pub compressed_from: Vec<String>,
 }
 
+impl MemoryEntry {
+    /// Check whether this entry matches the given query filters.
+    ///
+    /// This is the canonical filtering logic used by all cache and store
+    /// implementations. Returns `true` if the entry passes every filter
+    /// in the query (kinds, tags, session_id, user_id, since, min_weight,
+    /// confirmed_only).
+    pub fn matches_query(&self, query: &MemoryQuery) -> bool {
+        if !query.kinds.is_empty() && !query.kinds.contains(&self.kind) {
+            return false;
+        }
+        if !query.tags.is_empty() && !query.tags.iter().any(|t| self.tags.contains(t)) {
+            return false;
+        }
+        if let Some(ref sid) = query.session_id {
+            if self.session_id.as_ref() != Some(sid) {
+                return false;
+            }
+        }
+        if let Some(ref uid) = query.user_id {
+            let entry_user = self
+                .data
+                .as_ref()
+                .and_then(|d| d.get("user_id"))
+                .and_then(|v| v.as_str());
+            if entry_user != Some(uid.as_str())
+                && !self.source_agent.contains(uid) {
+                    return false;
+                }
+        }
+        if let Some(since) = query.since {
+            if self.created_at < since {
+                return false;
+            }
+        }
+        if self.weight < query.min_weight {
+            return false;
+        }
+        if query.confirmed_only && !self.confirmed {
+            return false;
+        }
+        true
+    }
+}
+
 /// Builder for MemoryEntry with sensible defaults.
 ///
 /// Defaults: id=UUID, session_id=None, embedding=None, access_count=0,

@@ -23,7 +23,7 @@ pub struct ExecutionPlan {
 /// Tool intent metadata carried from MainAgent to task_planner
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolIntent {
-    /// Tool name (e.g. "xxt", "http_request", "file")
+    /// Tool name (e.g. "xxt", "file", "media")
     pub tool_name: String,
     /// Confidence score (0.0 - 1.0)
     pub confidence: f32,

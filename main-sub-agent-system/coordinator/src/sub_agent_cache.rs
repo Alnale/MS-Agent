@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use lru::LruCache;
 
-use agent_teams_core::boxed_agent::AgentOutput;
+use agent_core::boxed_agent::AgentOutput;
 
 /// Tiered TTL configuration for SubAgent cache
 #[derive(Debug, Clone)]

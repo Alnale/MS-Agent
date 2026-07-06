@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ParamInfo } from './toolParamUtils';
 
 interface Props {
@@ -7,7 +8,7 @@ interface Props {
   contextReq: boolean;
 }
 
-export function ParamInput({ param, value, onChange, contextReq }: Props) {
+export const ParamInput = memo(function ParamInput({ param, value, onChange, contextReq }: Props) {
   const showRequired = contextReq || param.required;
 
   if (param.enum) {
@@ -85,4 +86,4 @@ export function ParamInput({ param, value, onChange, contextReq }: Props) {
         value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
-}
+});

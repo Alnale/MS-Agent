@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
 
 /// Guard that records a success on the circuit breaker when dropped,
 /// unless an error was seen during the stream's lifetime.
@@ -259,6 +259,7 @@ mod tests {
                     usage: TokenUsage::default(),
                     stop_reason: None,
                     tool_calls: vec![],
+                    annotations: vec![],
                 })
             }
         }
@@ -282,6 +283,7 @@ mod tests {
         CompletionRequest {
             model: "mock-model".to_string(),
             messages: vec![],
+            input: None,
             max_tokens: None,
             temperature: None,
             system: None,
@@ -290,6 +292,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking: None,
+            response_format: None,
         }
     }
 

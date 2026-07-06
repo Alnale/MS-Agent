@@ -1,21 +1,21 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_teams_core::agent_memory_cache::ExecutionPolicy;
-use agent_teams_core::boxed_agent::{AgentInput, AgentOutput, BoxedAgent, MemoryAwareAgent};
-use agent_teams_core::config::{CostOptimizationConfig, DegradationConfig};
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::context_provider::ContextProvider;
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::event::{EventBus, SystemEvent};
-use agent_teams_core::hook::{HookContext, HookData, HookPoint, HookRegistry, HookResult};
-use agent_teams_core::message::{AgentMessage, AgentStatus};
-use agent_teams_core::plan::ExecutionPlan;
-use agent_teams_core::provider::{AgentProgress, CompletionChunk, ProviderError};
-use agent_teams_core::registry::AgentRegistry;
+use agent_core::agent_memory_cache::ExecutionPolicy;
+use agent_core::boxed_agent::{AgentInput, AgentOutput, BoxedAgent, MemoryAwareAgent};
+use agent_core::config::{CostOptimizationConfig, DegradationConfig};
+use agent_core::context::AgentContext;
+use agent_core::context_provider::ContextProvider;
+use agent_core::effect::AgentEffect;
+use agent_core::event::{EventBus, SystemEvent};
+use agent_core::hook::{HookContext, HookData, HookPoint, HookRegistry, HookResult};
+use agent_core::message::{AgentMessage, AgentStatus};
+use agent_core::plan::ExecutionPlan;
+use agent_core::provider::{AgentProgress, CompletionChunk, ProviderError};
+use agent_core::registry::AgentRegistry;
 use futures::StreamExt;
-use agent_teams_core::state::ApplyResult;
-use agent_teams_core::unified_memory_bus::UnifiedMemoryBus;
+use agent_core::state::ApplyResult;
+use agent_core::unified_memory_bus::UnifiedMemoryBus;
 
 use crate::aggregator::EffectAggregator;
 use crate::cache::ResponseCache;
@@ -80,6 +80,8 @@ pub struct MainAgentCoordinator {
     execution_policy: ExecutionPolicy,
     /// Unified memory bus for cross-agent cache coordination
     unified_bus: Option<Arc<UnifiedMemoryBus>>,
+    /// Limits concurrent fact-extraction tasks to prevent unbounded spawning
+    fact_extraction_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl MainAgentCoordinator {
@@ -109,6 +111,7 @@ impl MainAgentCoordinator {
                 sub_agent_results: None,
                 companion_state: None,
                 agent_progress: Some(progress),
+                annotations: None,
             }));
         }
     }
@@ -135,6 +138,7 @@ impl MainAgentCoordinator {
             summary_service: None,
             execution_policy: ExecutionPolicy::default(),
             unified_bus: None,
+            fact_extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
 
@@ -204,7 +208,7 @@ impl MainAgentCoordinator {
     }
 
     /// Set the tool registry for providing tool info to all agents
-    pub fn with_tool_registry(mut self, registry: Arc<agent_teams_core::tool::UnifiedToolRegistry>) -> Self {
+    pub fn with_tool_registry(mut self, registry: Arc<agent_core::tool::UnifiedToolRegistry>) -> Self {
         self.plan_executor.set_tool_registry(registry);
         self
     }
@@ -287,17 +291,16 @@ impl MainAgentCoordinator {
         None
     }
 
-    /// Generate a stable cache key using FNV-1a hash algorithm.
-    /// Includes session_id to prevent cross-session cache pollution
-    /// (different sessions have different conversation context).
+    /// Generate a stable cache key from session_id + message_type + content.
+    /// Uses the raw string (not a hash) to eliminate collision risk entirely.
     fn cache_key(ctx: &AgentContext, msg: &AgentMessage) -> String {
-        agent_teams_core::hash::fnv1a_hash_str(&[&ctx.session_id, &msg.message_type, &msg.content])
+        format!("{}|{}|{}", ctx.session_id, msg.message_type, msg.content)
     }
 
     /// Ensure a specific agent is present in the plan. Adds it if missing.
     fn ensure_agent_in_plan(mut plan: ExecutionPlan, agent_id: &str) -> ExecutionPlan {
         let already_present = plan.stages.iter().any(|s| s.sub_agent_ids.contains(&agent_id.to_string()))
-            || plan.nodes.iter().any(|n| matches!(n, agent_teams_core::plan::PlanNode::Agent { agent_id: id, .. } if id == agent_id));
+            || plan.nodes.iter().any(|n| matches!(n, agent_core::plan::PlanNode::Agent { agent_id: id, .. } if id == agent_id));
 
         if already_present {
             return plan;
@@ -306,16 +309,16 @@ impl MainAgentCoordinator {
         tracing::info!("Adding '{}' to plan (was missing)", agent_id);
 
         if plan.nodes.is_empty() {
-            plan.stages.push(agent_teams_core::plan::PlanStage {
+            plan.stages.push(agent_core::plan::PlanStage {
                 name: format!("ensure_{}", agent_id),
                 sub_agent_ids: vec![agent_id.to_string()],
-                mode: agent_teams_core::pipeline::StageMode::Parallel,
+                mode: agent_core::pipeline::StageMode::Parallel,
                 required: false,
                 timeout_ms: Some(30_000),
                 message_override: None,
             });
         } else {
-            plan.nodes.push(agent_teams_core::plan::PlanNode::Agent {
+            plan.nodes.push(agent_core::plan::PlanNode::Agent {
                 agent_id: agent_id.to_string(),
                 input_transform: None,
             });
@@ -341,7 +344,7 @@ impl MainAgentCoordinator {
             "tell me", "help me", "could you help",
         ];
         for pattern in &hard_blockers {
-            if content.contains(pattern) {
+            if lower.contains(pattern) {
                 return false;
             }
         }
@@ -650,7 +653,7 @@ impl MainAgentCoordinator {
         if let Some(cached_output) = self.cache.get(&cache_key).await {
             tracing::info!("Response cache hit, skipping pipeline for key: {}", cache_key);
             return MainCoordinatorResult {
-                narrative: cached_output.content,
+                narrative: cached_output.content.clone(),
                 quality: cached_output.quality,
                 cache_hit: true,
                 ..Default::default()
@@ -727,7 +730,7 @@ impl MainAgentCoordinator {
 
             if issues
                 .iter()
-                .any(|(sev, _)| matches!(sev, agent_teams_core::effect::ReviewSeverity::Critical))
+                .any(|(sev, _)| matches!(sev, agent_core::effect::ReviewSeverity::Critical))
             {
                 let re_synthesized = self
                     .main_agent
@@ -806,13 +809,19 @@ impl MainAgentCoordinator {
                 tracing::warn!("Failed to record turn to memory: {}", e);
             }
 
-            // Extract and store key facts asynchronously (non-blocking)
+            // Extract and store key facts asynchronously (non-blocking).
+            // Semaphore limits concurrency to prevent unbounded task spawning under load.
             let mm_clone = mm.clone();
             let user_id = enriched_ctx.user_id.clone().unwrap_or_default();
             let session_id = enriched_ctx.session_id.clone();
             let user_msg = msg.content.clone();
             let assistant_msg = narrative.clone();
+            let semaphore = self.fact_extraction_semaphore.clone();
             tokio::spawn(async move {
+                let _permit = match semaphore.acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => return,
+                };
                 if let Err(e) = mm_clone
                     .extract_and_store_facts(&user_id, &session_id, &user_msg, &assistant_msg)
                     .await
@@ -950,10 +959,10 @@ impl MainAgentCoordinator {
                 ctx,
                 msg,
                 &ExecutionPlan {
-                    stages: vec![agent_teams_core::plan::PlanStage {
+                    stages: vec![agent_core::plan::PlanStage {
                         name: "adaptive_fallback".to_string(),
                         sub_agent_ids: fallback_ids,
-                        mode: agent_teams_core::pipeline::StageMode::Parallel,
+                        mode: agent_core::pipeline::StageMode::Parallel,
                         required: false,
                         timeout_ms: Some(15_000),
                         message_override: Some(AgentMessage::new(format!(
@@ -1060,8 +1069,8 @@ impl MainAgentCoordinator {
                     Some(output) => {
                         // Already called — allow re-execution if previous result was poor
                         let is_poor = output.quality < 0.6
-                            || matches!(output.status, agent_teams_core::message::AgentStatus::Error(_))
-                            || output.status == agent_teams_core::message::AgentStatus::Timeout
+                            || matches!(output.status, agent_core::message::AgentStatus::Error(_))
+                            || output.status == agent_core::message::AgentStatus::Timeout
                             || output.content.contains("maximum iterations");
                         if is_poor {
                             tracing::info!(
@@ -1088,8 +1097,8 @@ impl MainAgentCoordinator {
             .unwrap_or("Parallel");
 
         let stage_mode = match mode {
-            "Sequential" => agent_teams_core::pipeline::StageMode::Sequential,
-            _ => agent_teams_core::pipeline::StageMode::Parallel,
+            "Sequential" => agent_core::pipeline::StageMode::Sequential,
+            _ => agent_core::pipeline::StageMode::Parallel,
         };
 
         tracing::info!(
@@ -1099,7 +1108,7 @@ impl MainAgentCoordinator {
         );
 
         let additional_plan = ExecutionPlan {
-            stages: vec![agent_teams_core::plan::PlanStage {
+            stages: vec![agent_core::plan::PlanStage {
                 name: "task_planner_routed".to_string(),
                 sub_agent_ids: additional_agents,
                 mode: stage_mode,
@@ -1262,7 +1271,7 @@ impl MainAgentCoordinator {
     /// Warm agent-local caches with preloaded memories.
     /// Clears stale caches from previous sessions before loading new ones
     /// to enforce strict session isolation.
-    async fn warm_agent_caches(&self, memories: &[agent_teams_core::memory::MemoryEntry]) {
+    async fn warm_agent_caches(&self, memories: &[agent_core::memory::MemoryEntry]) {
         if memories.is_empty() {
             return;
         }
@@ -1425,17 +1434,11 @@ impl MainAgentCoordinator {
         let cache_key = Self::cache_key(ctx, msg);
         if let Some(cached_output) = self.cache.get(&cache_key).await {
             tracing::info!("Response cache hit, skipping pipeline for key: {}", cache_key);
-            let content = cached_output.content;
+            let content = cached_output.content.clone();
             let chunk = CompletionChunk {
                 delta: content,
-                thinking_delta: None,
                 done: true,
-                usage: None,
-                tool_call_delta: None,
-                tool_status: None,
-                sub_agent_results: None,
-                companion_state: None,
-                agent_progress: None,
+                ..Default::default()
             };
             return Box::new(Box::pin(futures::stream::once(async move { Ok(chunk) })));
         }
@@ -1451,7 +1454,7 @@ impl MainAgentCoordinator {
         let msg_owned = msg.clone();
 
         // Set up tool event channel: task_planner emits events here, we forward to SSE
-        let (tool_event_tx, mut tool_event_rx) = tokio::sync::mpsc::unbounded_channel::<agent_teams_core::tool::ToolStatusEvent>();
+        let (tool_event_tx, mut tool_event_rx) = tokio::sync::mpsc::unbounded_channel::<agent_core::tool::ToolStatusEvent>();
         ctx_owned.tool_event_tx = Some(Arc::new(tool_event_tx));
 
         tokio::spawn(async move {
@@ -1461,15 +1464,8 @@ impl MainAgentCoordinator {
                 while let Some(event) = tool_event_rx.recv().await {
                     tracing::debug!("Forwarding tool event to SSE: {:?}", &event);
                     let chunk = CompletionChunk {
-                        delta: String::new(),
-                        thinking_delta: None,
-                        done: false,
-                        usage: None,
-                        tool_call_delta: None,
                         tool_status: Some(event),
-                        sub_agent_results: None,
-                companion_state: None,
-                        agent_progress: None,
+                        ..Default::default()
                     };
                     if tool_forward_tx.send(Ok(chunk)).is_err() {
                         tracing::debug!("SSE channel closed, stopping tool event forwarding");
@@ -1497,15 +1493,8 @@ impl MainAgentCoordinator {
                     let stage_msg = stages[tick_count.min(stages.len() - 1)].to_string();
                     tick_count += 1;
                     let chunk = CompletionChunk {
-                        delta: String::new(),
                         thinking_delta: Some(stage_msg),
-                        done: false,
-                        usage: None,
-                        tool_call_delta: None,
-                        tool_status: None,
-                        sub_agent_results: None,
-                companion_state: None,
-                        agent_progress: None,
+                        ..Default::default()
                     };
                     if heartbeat_tx.send(Ok(chunk)).is_err() {
                         break; // receiver dropped
@@ -1519,22 +1508,20 @@ impl MainAgentCoordinator {
             // Stop heartbeat immediately
             heartbeat_handle.abort();
 
-            // Give the tool forwarding task a moment to flush any remaining events
-            // that were emitted right before prepare_pipeline returned.
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            tool_forward_handle.abort();
+            // Drop the tool event sender so the forwarding task's recv() returns None,
+            // then wait for it to flush all remaining events and exit naturally.
+            // Timeout prevents hang if a leaked sender survives prepare_pipeline.
+            ctx_owned.tool_event_tx.take();
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                tool_forward_handle,
+            ).await;
 
             let Some(pipeline) = pipeline else {
                 let _ = tx.send(Ok(CompletionChunk {
                     delta: "Halted by hooks".to_string(),
-                    thinking_delta: None,
                     done: true,
-                    usage: None,
-                    tool_call_delta: None,
-                    tool_status: None,
-                    sub_agent_results: None,
-                companion_state: None,
-                    agent_progress: None,
+                    ..Default::default()
                 }));
                 return;
             };
@@ -1560,7 +1547,7 @@ impl MainAgentCoordinator {
                 "Building sub_agent_summaries from {} results",
                 sub_results.len()
             );
-            let mut sub_agent_summaries: Vec<agent_teams_core::provider::SubAgentResultSummary> =
+            let mut sub_agent_summaries: Vec<agent_core::provider::SubAgentResultSummary> =
                 Vec::new();
             for (id, r) in &sub_results {
                 if r.content.is_empty() {
@@ -1575,7 +1562,7 @@ impl MainAgentCoordinator {
                 } else {
                     None
                 };
-                let summary = agent_teams_core::provider::SubAgentResultSummary {
+                let summary = agent_core::provider::SubAgentResultSummary {
                     agent_id: id.clone(),
                     content_summary: r.content.chars().take(8192).collect(),
                     thinking: r.thinking.clone(),
@@ -1596,15 +1583,8 @@ impl MainAgentCoordinator {
             }
             if !sub_agent_summaries.is_empty() {
                 let _ = tx.send(Ok(CompletionChunk {
-                    delta: String::new(),
-                    thinking_delta: None,
-                    done: false,
-                    usage: None,
-                    tool_call_delta: None,
-                    tool_status: None,
                     sub_agent_results: Some(sub_agent_summaries),
-                    agent_progress: None,
-                    companion_state: None,
+                    ..Default::default()
                 }));
             }
 
@@ -1652,6 +1632,19 @@ impl MainAgentCoordinator {
                     }
                 }
             }
+
+            // Collect and forward annotations from all sub-agent results (e.g., web search citations)
+            let all_annotations: Vec<serde_json::Value> = sub_results
+                .iter()
+                .flat_map(|(_, r)| r.annotations.clone())
+                .collect();
+            if !all_annotations.is_empty() {
+                let _ = tx.send(Ok(CompletionChunk {
+                    annotations: Some(all_annotations),
+                    ..Default::default()
+                }));
+            }
+
             // tx is dropped here when the task completes, closing the receiver stream
 
             // Publish events
@@ -1758,7 +1751,7 @@ impl MainAgentCoordinator {
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
                 match event {
-                    agent_teams_core::memory_event_bus::MemoryChangeEvent::Stored {
+                    agent_core::memory_event_bus::MemoryChangeEvent::Stored {
                         agent_id,
                         tags,
                         ..
@@ -1778,13 +1771,13 @@ impl MainAgentCoordinator {
                             bus.shared_cache().invalidate_agent(&agent_id).await;
                         }
                     }
-                    agent_teams_core::memory_event_bus::MemoryChangeEvent::Updated {
+                    agent_core::memory_event_bus::MemoryChangeEvent::Updated {
                         agent_id,
                         ..
                     } => {
                         tracing::debug!("Memory event: agent={} updated memory", agent_id);
                     }
-                    agent_teams_core::memory_event_bus::MemoryChangeEvent::Invalidated {
+                    agent_core::memory_event_bus::MemoryChangeEvent::Invalidated {
                         agent_id,
                         memory_id,
                     } => {
@@ -1794,7 +1787,7 @@ impl MainAgentCoordinator {
                             memory_id
                         );
                     }
-                    agent_teams_core::memory_event_bus::MemoryChangeEvent::SessionEnded {
+                    agent_core::memory_event_bus::MemoryChangeEvent::SessionEnded {
                         session_id,
                     } => {
                         tracing::info!("Memory event: session {} ended, clearing shared cache", session_id);

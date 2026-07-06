@@ -1,6 +1,6 @@
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::error::Result;
-use agent_teams_core::state::{ApplyResult, StateStore};
+use agent_core::effect::AgentEffect;
+use agent_core::error::Result;
+use agent_core::state::{ApplyResult, StateStore};
 
 /// State applier: persists effects to the state store
 pub struct StateApplier {

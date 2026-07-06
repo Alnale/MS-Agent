@@ -109,8 +109,17 @@ pub fn build_memory_prompt_from_entries(working_memory: &[MemoryEntry]) -> Strin
     build_memory_prompt_optimized(working_memory, 2000)  // Default 2000 token budget
 }
 
+/// Estimate token count for text (Chinese chars ~1 token, English words ~1.3 tokens).
+///
+/// This is a shared utility used by both core (context building) and coordinator (memory truncation).
+pub fn estimate_tokens(text: &str) -> usize {
+    let char_count = text.chars().count();
+    let word_count = text.split_whitespace().count();
+    char_count + word_count * 13 / 10
+}
+
 /// Build memory-enhanced prompt with token budget and priority-based selection.
-/// 
+///
 /// Priority order:
 /// 1. UserProfile (weight > 0.8) - must include
 /// 2. Confirmed UserFacts - must include
@@ -123,13 +132,6 @@ pub fn build_memory_prompt_optimized(working_memory: &[MemoryEntry], token_budge
     if working_memory.is_empty() {
         return String::new();
     }
-
-    // Estimate token count (Chinese chars ~1 token, English words ~1.3 tokens)
-    let estimate_tokens = |text: &str| -> usize {
-        let char_count = text.chars().count();
-        let word_count = text.split_whitespace().count();
-        char_count + word_count * 13 / 10
-    };
 
     // Categorize entries by priority
     let mut critical: Vec<&MemoryEntry> = Vec::new();  // weight > 0.8

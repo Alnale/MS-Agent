@@ -71,6 +71,8 @@ export const InputBar = memo(function InputBar({ onSend, onStop, disabled, focus
     const onBlur = () => onFocusChange(false);
     el.addEventListener('focusin', onFocus);
     el.addEventListener('focusout', onBlur);
+    // Sync state if textarea is already focused (e.g. by the auto-focus effect above)
+    if (document.activeElement === el) onFocus();
     return () => {
       el.removeEventListener('focusin', onFocus);
       el.removeEventListener('focusout', onBlur);
@@ -96,6 +98,7 @@ export const InputBar = memo(function InputBar({ onSend, onStop, disabled, focus
 
   const idlePhaseRef = useRef(0);
   const barsRef = useRef<Float32Array>(new Float32Array(BAR_COUNT));
+  const targetRef = useRef<Float32Array>(new Float32Array(BAR_COUNT));
   const frequencyDataRef = useRef(frequencyData);
   frequencyDataRef.current = frequencyData;
 
@@ -112,7 +115,7 @@ export const InputBar = memo(function InputBar({ onSend, onStop, disabled, focus
     const freqData = frequencyDataRef.current;
     const hasAudio = !!freqData;
     const bars = barsRef.current;
-    const target = new Float32Array(BAR_COUNT);
+    const target = targetRef.current;
 
     idlePhaseRef.current += 0.02;
 
@@ -203,8 +206,28 @@ export const InputBar = memo(function InputBar({ onSend, onStop, disabled, focus
       canvas.width = CANVAS_W;
       canvas.height = MAX_H;
     }
-    rafRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafRef.current);
+
+    let active = true;
+    const loop = () => {
+      if (!active) return;
+      draw();
+    };
+    rafRef.current = requestAnimationFrame(loop);
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(rafRef.current);
+      } else if (active) {
+        rafRef.current = requestAnimationFrame(loop);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      active = false;
+      cancelAnimationFrame(rafRef.current);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [draw]);
 
   const handleSubmit = () => {

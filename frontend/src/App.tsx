@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo, lazy, Suspense } from 'react';
 import { useChat } from './hooks/useChat';
 import { useSession } from './hooks/useSession';
 import { usePreset } from './hooks/usePreset';
@@ -17,18 +17,21 @@ import { LgGlassMask } from './components/LgGlassMask';
 import { LgGlassCard } from './components/LgGlassCard';
 import { LgGlassButton } from './components/LgGlassButton';
 import { SessionList } from './components/SessionList';
-import { SettingsPanel } from './components/SettingsPanel';
 import { WelcomeScreen } from './components/WelcomeScreen';
-import { SplashScreen } from './components/SplashScreen';
 import { BgTransition } from './components/BgTransition';
-import { ChangelogPanel } from './components/ChangelogPanel';
 import { MusicPlayer } from './components/MusicPlayer';
 import { CompanionPanel } from './components/CompanionPanel';
-import { ImportDialog } from './components/ImportDialog';
-import type { ConflictChoice, SubfolderChoice, ConflictInfo, SubfolderInfo } from './components/ImportDialog';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import type { ChatMessage, ToolStatusEvent } from './api/types';
+import type { ConflictChoice, SubfolderChoice, ConflictInfo, SubfolderInfo } from './components/ImportDialog';
 import { BASE_URL } from './config';
 import './App.css';
+
+// Lazy-load heavy conditionally-rendered components
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
+const ChangelogPanel = lazy(() => import('./components/ChangelogPanel'));
+const ImportDialog = lazy(() => import('./components/ImportDialog'));
+const SplashScreen = lazy(() => import('./components/SplashScreen'));
 
 // ── Liquid Glass types ──
 export type LgCategory = {
@@ -98,17 +101,16 @@ function App() {
   const handleAnalyserReady = useCallback((an: AnalyserNode | null) => { setMusicAnalyser(an); }, []);
 
   const musicImportFiles = useCallback((files: FileList | File[], folder?: string) => mediaLibrary.importFilesByType('music', files, folder), [mediaLibrary.importFilesByType]);
-  const musicImportFolder = useCallback((files: FileList, folder?: string) => mediaLibrary.importFilesByType('music', files, folder), [mediaLibrary.importFilesByType]);
 
   const musicLibraryData = useMemo(() => ({
     music: mediaLibrary.music,
     importFiles: musicImportFiles,
-    importFolder: musicImportFolder,
+    importFolder: musicImportFiles,
     remove: mediaLibrary.remove,
     removeFolder: mediaLibrary.removeFolder,
     removeAll: mediaLibrary.removeAll,
     getUrl: mediaLibrary.getUrl,
-  }), [mediaLibrary.music, musicImportFiles, musicImportFolder, mediaLibrary.remove, mediaLibrary.removeFolder, mediaLibrary.removeAll, mediaLibrary.getUrl]);
+  }), [mediaLibrary.music, musicImportFiles, mediaLibrary.remove, mediaLibrary.removeFolder, mediaLibrary.removeAll, mediaLibrary.getUrl]);
 
   const handleToggleMusicPinned = useCallback(() => { setMusicPinned(prev => !prev); }, []);
 
@@ -161,6 +163,18 @@ function App() {
     return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${alpha})`;
   }, []);
 
+  const appStyle = useMemo(() => ({
+    '--bubble-text-color': effectiveTextColor,
+    '--user-bubble-bg': settings.useSolidBubble
+      ? settings.solidUserBubbleColor
+      : `linear-gradient(135deg, ${hexToRgba(settings.userBubbleColor, settings.userBubbleAlpha)} 0%, ${hexToRgba(settings.assistantBubbleColor, settings.userBubbleAlpha)} 100%)`,
+    '--assistant-bubble-bg': settings.useSolidBubble
+      ? settings.solidAssistantBubbleColor
+      : `linear-gradient(135deg, ${hexToRgba(settings.userBubbleColor, settings.assistantBubbleAlpha)} 0%, ${hexToRgba(settings.assistantBubbleColor, settings.assistantBubbleAlpha)} 100%)`,
+    '--user-bubble-border': settings.useSolidBubble ? settings.solidUserBubbleColor : hexToRgba(settings.userBubbleColor, Math.min(1, settings.userBubbleAlpha + 0.15)),
+    '--assistant-bubble-border': settings.useSolidBubble ? settings.solidAssistantBubbleColor : hexToRgba(settings.assistantBubbleColor, Math.min(1, settings.assistantBubbleAlpha + 0.15)),
+  } as React.CSSProperties), [effectiveTextColor, settings.useSolidBubble, settings.solidUserBubbleColor, settings.solidAssistantBubbleColor, settings.userBubbleColor, settings.userBubbleAlpha, settings.assistantBubbleColor, settings.assistantBubbleAlpha, hexToRgba]);
+
   const isNewSessionRef = useRef(false);
 
   const bgTransitionActionRef = useRef<(() => void) | null>(null);
@@ -181,7 +195,7 @@ function App() {
     const tryPlay = () => { el.play().catch(() => {}); };
     if (el.readyState >= 3) tryPlay();
     else { el.addEventListener('canplay', tryPlay, { once: true }); return () => el.removeEventListener('canplay', tryPlay); }
-  }, [bgVideo, video.videoMuted, showSplash, video.videoPlaying]);
+  }, [bgVideo, showSplash, video.videoPlaying]);
 
   useEffect(() => { if (!bgVideo) video.setVideoPlaying(false); }, [bgVideo]);
 
@@ -230,12 +244,9 @@ function App() {
         const b64 = output.file_data as string;
         const mime = (output.mime_type as string) || 'image/png';
         if (!b64) break;
-        const { file } = importB64(b64, mime, 'png', 'image');
+        const { file, blob } = importB64(b64, mime, 'png', 'image');
         mediaLibrary.importFiles([file]).then(() => {
-          const bin = atob(b64);
-          const arr = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-          setBgImage(URL.createObjectURL(new Blob([arr] as BlobPart[], { type: mime })));
+          setBgImage(URL.createObjectURL(blob));
         });
         break;
       }
@@ -304,7 +315,7 @@ function App() {
       case 'clear_bg': setBgImage(null); setBgVideo(null); break;
       case 'get_status': break;
     }
-  }, [mediaLibrary, setBgImage, setBgVideo, activateBgImage, activateBgVideo, handleAddTrack, musicPinned, musicPlaying, toggleMusic, setMusicPlaying, toggleMusicMute, handleMusicNext, handleMusicPrev, setMusicVolume, setMusicFile, setMusicPinned, playlist, handleSelectTrack]);
+  }, [mediaLibrary, setBgImage, setBgVideo, activateBgImage, activateBgVideo, handleAddTrack, musicPinned, musicPlaying, toggleMusic, setMusicPlaying, toggleMusicMute, handleMusicNext, handleMusicPrev, setMusicVolume, setMusicPinned, playlist, handleSelectTrack]);
 
   const { messages, isStreaming, error, toolEvents, agentProgress, companionState, sendMessage: rawSendMessage, stopGeneration, clearMessages } = useChat({
     baseUrl: BASE_URL, session: currentSession, onMessagesChange: handleMessagesChange,
@@ -365,7 +376,7 @@ function App() {
 
   return (
     <>
-    {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
+    {showSplash && <ErrorBoundary><Suspense fallback={null}><SplashScreen onComplete={handleSplashComplete} /></Suspense></ErrorBoundary>}
     {bgTransitionActive && <BgTransition onMidpoint={handleBgTransitionMidpoint} onComplete={handleBgTransitionComplete} />}
     <div
       className={`app-root${!bgLoading && (bgImage || bgVideo) ? ' has-custom-bg' : ''}${settings.hideGlass ? ' hide-glass' : ''}${settings.useSolidBubble ? ' solid-bubble' : ''}`}
@@ -373,17 +384,7 @@ function App() {
       data-lg-card={settings.lgConfig.enabled && settings.lgConfig.card.enabled ? 'true' : undefined}
       data-lg-button={settings.lgConfig.enabled && settings.lgConfig.button.enabled ? 'true' : undefined}
       data-lg-companion={settings.lgConfig.enabled && settings.lgConfig.companionPanel ? 'true' : undefined}
-      style={{
-        '--bubble-text-color': effectiveTextColor,
-        '--user-bubble-bg': settings.useSolidBubble
-          ? settings.solidUserBubbleColor
-          : `linear-gradient(135deg, ${hexToRgba(settings.userBubbleColor, settings.userBubbleAlpha)} 0%, ${hexToRgba(settings.assistantBubbleColor, settings.userBubbleAlpha)} 100%)`,
-        '--assistant-bubble-bg': settings.useSolidBubble
-          ? settings.solidAssistantBubbleColor
-          : `linear-gradient(135deg, ${hexToRgba(settings.userBubbleColor, settings.assistantBubbleAlpha)} 0%, ${hexToRgba(settings.assistantBubbleColor, settings.assistantBubbleAlpha)} 100%)`,
-        '--user-bubble-border': settings.useSolidBubble ? settings.solidUserBubbleColor : hexToRgba(settings.userBubbleColor, Math.min(1, settings.userBubbleAlpha + 0.15)),
-        '--assistant-bubble-border': settings.useSolidBubble ? settings.solidAssistantBubbleColor : hexToRgba(settings.assistantBubbleColor, Math.min(1, settings.assistantBubbleAlpha + 0.15)),
-      } as React.CSSProperties}
+      style={appStyle}
     >
       {!bgLoading && !bgImage && !bgVideo && (
         <div className="default-bg-decor">
@@ -454,7 +455,7 @@ function App() {
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
 
       {settingsOpen && (
-        <SettingsPanel
+        <ErrorBoundary><Suspense fallback={null}><SettingsPanel
           bgImage={bgImage} bgVideo={bgVideo} bgOpacity={bgOpacity} bgBlur={bgBlur}
           hideGlass={settings.hideGlass} hideWelcomePrompt={settings.hideWelcomePrompt}
           useSolidBubble={settings.useSolidBubble} bubbleTextColor={settings.bubbleTextColor}
@@ -477,10 +478,10 @@ function App() {
           activeBgType={bgVideo && video.videoPlaying ? 'video' : bgImage ? 'image' : null}
           mediaLibrary={{ images: mediaLibrary.images, videos: mediaLibrary.videos, importFiles: mediaLibrary.importFiles, importFilesByType: mediaLibrary.importFilesByType, importFolder: mediaLibrary.importFolder, remove: mediaLibrary.remove, removeFolder: mediaLibrary.removeFolder, removeAll: mediaLibrary.removeAll, getUrl: mediaLibrary.getUrl }}
           lgConfig={settings.lgConfig} onLgConfigChange={settings.setLgConfig}
-        />
+        /></Suspense></ErrorBoundary>
       )}
 
-      {changelogOpen && <ChangelogPanel onClose={() => setChangelogOpen(false)} />}
+      {changelogOpen && <ErrorBoundary><Suspense fallback={null}><ChangelogPanel onClose={() => setChangelogOpen(false)} /></Suspense></ErrorBoundary>}
 
       <div className="chat-container">
         <div className="messages-scroll" ref={scrollRef} role="log" aria-live="polite" aria-label="聊天消息">
@@ -512,10 +513,10 @@ function App() {
     </div>
 
     {importDialog && importDialog.mode === 'conflict' && (
-      <ImportDialog mode="conflict" info={importDialog.info} onResolve={(choice, remember) => { (importDialog as any).resolve({ choice, remember }); setImportDialog(null); }} />
+      <ErrorBoundary><Suspense fallback={null}><ImportDialog mode="conflict" info={importDialog.info} onResolve={(choice, remember) => { importDialog.resolve({ choice, remember }); setImportDialog(null); }} /></Suspense></ErrorBoundary>
     )}
     {importDialog && importDialog.mode === 'subfolder' && (
-      <ImportDialog mode="subfolder" info={importDialog.info} onResolve={(choice, remember) => { (importDialog as any).resolve({ choice, remember }); setImportDialog(null); }} />
+      <ErrorBoundary><Suspense fallback={null}><ImportDialog mode="subfolder" info={importDialog.info} onResolve={(choice, remember) => { importDialog.resolve({ choice, remember }); setImportDialog(null); }} /></Suspense></ErrorBoundary>
     )}
     </>
   );

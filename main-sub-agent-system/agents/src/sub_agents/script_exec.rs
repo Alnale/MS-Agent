@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::tool::{
+use agent_core::error::Result;
+use agent_core::tool::{
     Tool, ToolCall, ToolExecutionContext, ToolExecutor, ToolParameters, ToolResult,
 };
 use async_trait::async_trait;
@@ -147,6 +147,7 @@ impl ToolExecutor for ScriptToolExecutor {
                         schema,
                         required: vec![],
                     },
+                    tool_type: "function".to_string(),
                     executor_id: "script".to_string(),
                     permission_tags: vec!["script".to_string()],
                     allow_parallel: false,
@@ -167,7 +168,7 @@ impl ToolExecutor for ScriptToolExecutor {
             .iter()
             .find(|s| s.name == call.name)
             .ok_or_else(|| {
-                agent_teams_core::error::AgentTeamsError::ToolNotFound(format!(
+                agent_core::error::AgentTeamsError::ToolNotFound(format!(
                     "Script not found: {}",
                     call.name
                 ))

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{MemoryKind, MemoryQuery};
-use agent_teams_core::memory_store::MemoryStore;
+use agent_core::error::Result;
+use agent_core::memory::{MemoryKind, MemoryQuery};
+use agent_core::memory_store::MemoryStore;
 
 /// Statistics for a single session's summaries
 #[derive(Debug, Default)]

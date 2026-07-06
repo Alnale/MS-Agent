@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 /// DocReader 服务地址
 const DOCREADER_BASE_URL: &str = "http://localhost:5002";
@@ -58,7 +58,7 @@ impl DocReaderTool {
             if self.is_service_running().await {
                 return Ok(());
             }
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 "DocReader 服务启动失败".to_string()
             ));
         }
@@ -68,7 +68,7 @@ impl DocReaderTool {
 
         let server_py = reader_dir.join("server.py");
         if !server_py.exists() {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("找不到 DocReader 服务文件: {}", server_py.display())
             ));
         }
@@ -113,7 +113,7 @@ impl DocReaderTool {
                 DOCREADER_STARTED.store(true, Ordering::Relaxed);
             }
             Err(e) => {
-                return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                return Err(agent_core::error::AgentTeamsError::NotFound(
                     format!("启动 DocReader 失败: {}", e)
                 ));
             }
@@ -127,7 +127,7 @@ impl DocReaderTool {
             }
         }
 
-        Err(agent_teams_core::error::AgentTeamsError::NotFound(
+        Err(agent_core::error::AgentTeamsError::NotFound(
             "DocReader 服务启动超时".to_string()
         ))
     }
@@ -143,7 +143,7 @@ impl DocReaderTool {
                 return Ok(p.canonicalize().unwrap_or_else(|_| p.clone()));
             }
         }
-        Err(agent_teams_core::error::AgentTeamsError::NotFound(
+        Err(agent_core::error::AgentTeamsError::NotFound(
             "找不到 DocReader 服务目录 (tools/DocReader)".to_string()
         ))
     }
@@ -499,7 +499,6 @@ impl ToolExecutor for DocReaderTool {
                     "工具联动：\n",
                     "- 读取的内容可用 file(write) 保存为文本文件\n",
                     "- 如果需要转换格式再读取，先用 docflow 转为 Markdown\n",
-                    "- http_request/http_get 下载的文档可直接传入 input_path\n",
                     "- 读取的题目内容可用于 xxt 的答案生成\n\n",
                     "自动启动读取服务。"
                 ))

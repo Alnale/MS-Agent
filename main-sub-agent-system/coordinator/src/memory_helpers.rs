@@ -1,4 +1,4 @@
-use agent_teams_core::memory::{self, MemoryEntry, MemoryEntryBuilder, MemoryKind};
+use agent_core::memory::{self, MemoryEntry, MemoryEntryBuilder, MemoryKind};
 
 /// Maximum characters to keep when truncating content for memory storage
 const MEMORY_CONTENT_MAX_LEN: usize = 500;

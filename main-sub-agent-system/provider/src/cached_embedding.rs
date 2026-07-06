@@ -1,16 +1,20 @@
-use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use lru::LruCache;
 
-use agent_teams_core::memory_store::{EmbeddingError, EmbeddingProvider};
+use agent_core::memory_store::{EmbeddingError, EmbeddingProvider};
 
-/// Cached embedding provider that wraps any EmbeddingProvider with an LRU cache
+/// Cached embedding provider that wraps any EmbeddingProvider with an LRU cache.
+///
+/// Cache keys are the raw input strings rather than a hash — this eliminates
+/// any chance of a hash collision returning the wrong vector (two different
+/// texts mapping to the same cache entry). The cost is one `String` clone per
+/// lookup, which is negligible compared to the embedding API call it avoids.
 pub struct CachedEmbeddingProvider {
     inner: Box<dyn EmbeddingProvider>,
-    cache: Mutex<LruCache<u64, Vec<f32>>>,
+    cache: Mutex<LruCache<String, Vec<f32>>>,
 }
 
 impl CachedEmbeddingProvider {
@@ -22,23 +26,15 @@ impl CachedEmbeddingProvider {
             )),
         }
     }
-
-    fn hash_text(text: &str) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 #[async_trait]
 impl EmbeddingProvider for CachedEmbeddingProvider {
     async fn embed(&self, text: &str) -> std::result::Result<Vec<f32>, EmbeddingError> {
-        let hash = Self::hash_text(text);
-
         // Check cache
         {
             let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(cached) = cache.get(&hash) {
+            if let Some(cached) = cache.get(text) {
                 return Ok(cached.clone());
             }
         }
@@ -49,7 +45,7 @@ impl EmbeddingProvider for CachedEmbeddingProvider {
         // Store in cache
         {
             let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-            cache.put(hash, embedding.clone());
+            cache.put(text.to_string(), embedding.clone());
         }
 
         Ok(embedding)
@@ -67,8 +63,7 @@ impl EmbeddingProvider for CachedEmbeddingProvider {
         {
             let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
             for (i, text) in texts.iter().enumerate() {
-                let hash = Self::hash_text(text);
-                if let Some(cached) = cache.get(&hash) {
+                if let Some(cached) = cache.get(*text) {
                     results.push(Some(cached.clone()));
                 } else {
                     results.push(None);
@@ -85,8 +80,7 @@ impl EmbeddingProvider for CachedEmbeddingProvider {
             // Store in cache and fill results
             let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
             for (idx, embedding) in uncached_indices.iter().zip(new_embeddings.iter()) {
-                let hash = Self::hash_text(texts[*idx]);
-                cache.put(hash, embedding.clone());
+                cache.put(texts[*idx].to_string(), embedding.clone());
                 results[*idx] = Some(embedding.clone());
             }
         }

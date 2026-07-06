@@ -52,7 +52,12 @@ impl RateLimiter {
     }
 
     /// Periodically evict stale buckets. Call once at startup.
-    pub fn start_cleanup_task(&self) {
+    ///
+    /// Returns a `JoinHandle` so the caller can abort the task on shutdown or
+    /// in tests — previously the spawned task ran forever and leaked across
+    /// `RateLimiter` instances (relevant in test suites that build many
+    /// limiters). The handle may be dropped to let the task run independently.
+    pub fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         let buckets = self.buckets.clone();
         tokio::spawn(async move {
             loop {
@@ -60,7 +65,7 @@ impl RateLimiter {
                 let cutoff = Instant::now() - Duration::from_secs(600);
                 buckets.retain(|_, b| b.last_refill > cutoff);
             }
-        });
+        })
     }
 }
 

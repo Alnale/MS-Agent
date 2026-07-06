@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use agent_teams_core::agent_memory_cache::ExecutionPolicy;
-use agent_teams_core::boxed_agent::{AgentInput, AgentOutput};
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::message::{AgentMessage, AgentStatus};
-use agent_teams_core::pipeline::StageMode;
-use agent_teams_core::plan::{ExecutionPlan, PlanExecutionState, PlanNode, PlanStage, ToolIntent};
-use agent_teams_core::registry::AgentRegistry;
-use agent_teams_core::tool::UnifiedToolRegistry;
+use agent_core::agent_memory_cache::ExecutionPolicy;
+use agent_core::boxed_agent::{AgentInput, AgentOutput};
+use agent_core::context::AgentContext;
+use agent_core::effect::AgentEffect;
+use agent_core::message::{AgentMessage, AgentStatus};
+use agent_core::pipeline::StageMode;
+use agent_core::plan::{ExecutionPlan, PlanExecutionState, PlanNode, PlanStage, ToolIntent};
+use agent_core::registry::AgentRegistry;
+use agent_core::tool::UnifiedToolRegistry;
 
-use agent_teams_core::unified_memory_bus::UnifiedMemoryBus;
+use agent_core::unified_memory_bus::UnifiedMemoryBus;
 
 use crate::orchestrator::Orchestrator;
 use crate::sub_agent_cache::SubAgentCache;
@@ -45,7 +45,7 @@ pub fn build_input(
 /// Generate a stable sub-agent cache key using FNV-1a.
 /// Key includes request_key (session_id) to prevent cross-session cache pollution.
 fn sub_agent_cache_key(request_key: &str, agent_id: &str, content: &str) -> String {
-    agent_teams_core::hash::fnv1a_hash_str(&[request_key, agent_id, content])
+    agent_core::hash::fnv1a_hash_str(&[request_key, agent_id, content])
 }
 
 /// Pipeline executor: executes an ExecutionPlan with optional caching
@@ -141,14 +141,6 @@ impl PipelineExecutor {
                     "subcommand": subcommand,
                     "url": Self::extract_url_from_content(content),
                 })
-            }
-            "http_request" | "http_get" | "http_post" => {
-                let url = Self::extract_url_from_content(content);
-                if !url.is_empty() {
-                    serde_json::json!({ "url": url })
-                } else {
-                    serde_json::json!({})
-                }
             }
             "media" => {
                 let action = if !subcommand.is_empty() {
@@ -317,7 +309,7 @@ impl PipelineExecutor {
         agent_id: &str,
         content: &str,
     ) -> Option<AgentOutput> {
-        if policy.cache_mode == agent_teams_core::agent_memory_cache::CacheMode::Bypass {
+        if policy.cache_mode == agent_core::agent_memory_cache::CacheMode::Bypass {
             return None;
         }
         let cache = self.cache.as_ref()?;
@@ -345,9 +337,9 @@ impl PipelineExecutor {
                     "低"
                 };
                 let status_label = match &r.status {
-                    agent_teams_core::message::AgentStatus::Success => "",
-                    agent_teams_core::message::AgentStatus::Timeout => "[超时]",
-                    agent_teams_core::message::AgentStatus::Error(_) => "[错误]",
+                    agent_core::message::AgentStatus::Success => "",
+                    agent_core::message::AgentStatus::Timeout => "[超时]",
+                    agent_core::message::AgentStatus::Error(_) => "[错误]",
                     _ => "",
                 };
                 format!("[{}][可信度:{}{}] {}", id, quality_label, status_label, content_preview)
@@ -523,7 +515,7 @@ impl PipelineExecutor {
         }
 
         // Write results to cache (for next time as context reference)
-        if policy.cache_mode != agent_teams_core::agent_memory_cache::CacheMode::Bypass {
+        if policy.cache_mode != agent_core::agent_memory_cache::CacheMode::Bypass {
             if let Some(cache) = &self.cache {
                 for (agent_id, output) in &results {
                     let cache_key = sub_agent_cache_key(&ctx.session_id, agent_id, &msg.content);
@@ -622,7 +614,7 @@ impl PipelineExecutor {
                 };
 
                 // Write as soft cache
-                if policy.cache_mode != agent_teams_core::agent_memory_cache::CacheMode::Bypass {
+                if policy.cache_mode != agent_core::agent_memory_cache::CacheMode::Bypass {
                     if let Some(cache) = &self.cache {
                         let cache_key = sub_agent_cache_key(&ctx.session_id, agent_id, &msg.content);
                         cache.put(cache_key, output.clone(), agent_id, false).await;
@@ -780,7 +772,7 @@ impl PipelineExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_teams_core::agent_memory_cache::{CacheMode, ExecutionPolicy};
+    use agent_core::agent_memory_cache::{CacheMode, ExecutionPolicy};
 
     #[test]
     fn test_execution_policy_enforces_sub_agent() {

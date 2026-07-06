@@ -35,13 +35,13 @@ set RELEASE_DIR=%~dp0release
 set PROJECT_DIR=%~dp0main-sub-agent-system
 
 REM Kill running instance if exists
-taskkill /IM agent-server.exe /F >nul 2>&1
+taskkill /IM agent_server.exe /F >nul 2>&1
 timeout /t 2 /nobreak >nul 2>&1
 
 if exist "%RELEASE_DIR%\tools" rmdir /s /q "%RELEASE_DIR%\tools"
 if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 
-copy /y "%PROJECT_DIR%\target\release\agent-server.exe" "%RELEASE_DIR%\"
+copy /y "%PROJECT_DIR%\target\release\agent_server.exe" "%RELEASE_DIR%\"
 copy /y "%PROJECT_DIR%\config.json" "%RELEASE_DIR%\"
 if exist "%PROJECT_DIR%\.env" copy /y "%PROJECT_DIR%\.env" "%RELEASE_DIR%\"
 copy /y "%~dp0start.bat" "%RELEASE_DIR%\"
@@ -61,11 +61,11 @@ if %errorlevel% neq 0 (
 echo.
 echo ========================================
 echo   Build complete!
-echo   Output: %RELEASE_DIR%\agent-server.exe
+echo   Output: %RELEASE_DIR%\agent_server.exe
 echo ========================================
 echo.
 echo Release contents:
-echo   agent-server.exe  - Frontend + Backend server
+echo   agent_server.exe  - Frontend + Backend server
 echo   config.json       - System configuration
 echo   .env              - API keys
 echo   tools/            - Tool scripts + embedded Python

@@ -51,6 +51,10 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
+    /// Tool type: "function" (default, locally executed) or platform tools like "web_search".
+    /// Non-function tools are included in LLM requests but not executed locally.
+    #[serde(default = "default_tool_type")]
+    pub tool_type: String,
     /// Executor ID for routing to concrete implementation
     pub executor_id: String,
     /// Permission tags for policy control
@@ -75,6 +79,10 @@ pub struct Tool {
     /// Example: ["path: 写入的文件路径", "bytes_written: 写入字节数"]
     #[serde(default)]
     pub output_fields: Vec<String>,
+}
+
+fn default_tool_type() -> String {
+    "function".to_string()
 }
 
 /// Tool parameter schema
@@ -139,9 +147,6 @@ impl ToolResult {
                     } else {
                         None
                     }
-                }
-                "http_request" | "http_get" | "http_post" => {
-                    Some("HTTP响应数据可用，如需传给其它工具可用 file(write) 持久化")
                 }
                 _ => None,
             };
@@ -790,7 +795,10 @@ impl UnifiedToolRegistry {
                         approval_message: message.clone(),
                     });
                 }
-                return Err(AgentTeamsError::ToolNotFound(message));
+                return Err(AgentTeamsError::ToolPendingApproval {
+                    tool_name: call.name.clone(),
+                    message,
+                });
             }
             PermissionDecision::Allowed => {}
         }
@@ -863,13 +871,13 @@ impl UnifiedToolRegistry {
         match result {
             Ok(Ok(tool_result)) => Ok(tool_result),
             Ok(Err(e)) => Err(e),
-            Err(_) => Ok(ToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                success: false,
-                output: Value::Null,
-                error: Some(format!("Tool execution timed out after {}ms", tool.default_timeout_ms)),
-                execution_duration_ms: tool.default_timeout_ms,
+            // Return Err rather than Ok(success=false) so the retry layer
+            // (execute_with_retry_core) can retry transient slowdowns and
+            // the circuit breaker records the failure. Previously a timeout
+            // was silently swallowed — never retried, never tripped the CB.
+            Err(_) => Err(AgentTeamsError::ToolTimeout {
+                tool_name: call.name.clone(),
+                timeout_ms: tool.default_timeout_ms,
             }),
         }
     }
@@ -947,6 +955,7 @@ pub struct ToolBuilder {
     description: String,
     properties: serde_json::Map<String, Value>,
     required: Vec<String>,
+    tool_type: String,
     executor_id: String,
     permission_tags: Vec<String>,
     allow_parallel: bool,
@@ -963,6 +972,7 @@ impl ToolBuilder {
             description: String::new(),
             properties: serde_json::Map::new(),
             required: Vec::new(),
+            tool_type: "function".to_string(),
             executor_id: String::new(),
             permission_tags: Vec::new(),
             allow_parallel: true,
@@ -980,6 +990,13 @@ impl ToolBuilder {
 
     pub fn executor(mut self, id: impl Into<String>) -> Self {
         self.executor_id = id.into();
+        self
+    }
+
+    /// Set the tool type (e.g., "function", "web_search").
+    /// Non-function tools are platform-level and not executed locally.
+    pub fn tool_type(mut self, tt: impl Into<String>) -> Self {
+        self.tool_type = tt.into();
         self
     }
 
@@ -1135,6 +1152,7 @@ impl ToolBuilder {
                 schema,
                 required: self.required,
             },
+            tool_type: self.tool_type,
             executor_id: self.executor_id,
             permission_tags: self.permission_tags,
             allow_parallel: self.allow_parallel,
@@ -1264,14 +1282,14 @@ mod tests {
     fn test_tool_result_compact_success() {
         let result = ToolResult {
             call_id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file".to_string(),
             success: true,
             output: serde_json::json!({"status": 200, "data": "hello"}),
             error: None,
             execution_duration_ms: 150,
         };
         let compact = result.compact();
-        assert_eq!(compact["tool"], "http_request");
+        assert_eq!(compact["tool"], "file");
         assert_eq!(compact["ok"], true);
         assert_eq!(compact["ms"], 150);
         assert!(compact["output"].is_object());
@@ -1315,8 +1333,8 @@ mod tests {
     #[test]
     fn test_tool_policy_engine_match_pattern() {
         assert!(ToolPolicyEngine::match_pattern("*", "any_tool"));
-        assert!(ToolPolicyEngine::match_pattern("http_*", "http_request"));
-        assert!(!ToolPolicyEngine::match_pattern("http_*", "db_query"));
+        assert!(ToolPolicyEngine::match_pattern("file_*", "file_read"));
+        assert!(!ToolPolicyEngine::match_pattern("file_*", "db_query"));
         assert!(ToolPolicyEngine::match_pattern("exact", "exact"));
         assert!(!ToolPolicyEngine::match_pattern("exact", "other"));
     }
@@ -1325,7 +1343,7 @@ mod tests {
     fn test_tool_policy_engine_check_permission() {
         let engine = ToolPolicyEngine {
             rules: vec![ToolPolicyRule {
-                tool_pattern: "http_*".to_string(),
+                tool_pattern: "file_*".to_string(),
                 required_permissions: vec![],
                 allowed_agents: Some(vec!["tool_exec".to_string()]),
                 allowed_users: None,
@@ -1347,7 +1365,7 @@ mod tests {
 
         let call = ToolCall {
             id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file_read".to_string(),
             arguments: Value::Null,
         };
 
@@ -1370,7 +1388,7 @@ mod tests {
     fn test_policy_engine_rate_limit() {
         let engine = ToolPolicyEngine {
             rules: vec![ToolPolicyRule {
-                tool_pattern: "http_*".to_string(),
+                tool_pattern: "file_*".to_string(),
                 required_permissions: vec![],
                 allowed_agents: None,
                 allowed_users: None,
@@ -1392,7 +1410,7 @@ mod tests {
 
         let call = ToolCall {
             id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file_read".to_string(),
             arguments: Value::Null,
         };
 
@@ -1429,7 +1447,7 @@ mod tests {
 
         let call = ToolCall {
             id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file_read".to_string(),
             arguments: Value::Null,
         };
 
@@ -1440,7 +1458,7 @@ mod tests {
     fn test_policy_engine_allowed_users() {
         let engine = ToolPolicyEngine {
             rules: vec![ToolPolicyRule {
-                tool_pattern: "http_*".to_string(),
+                tool_pattern: "file_*".to_string(),
                 required_permissions: vec![],
                 allowed_agents: None,
                 allowed_users: Some(vec!["user_admin".to_string()]),
@@ -1452,7 +1470,7 @@ mod tests {
 
         let call = ToolCall {
             id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file_read".to_string(),
             arguments: Value::Null,
         };
 
@@ -1500,10 +1518,10 @@ mod tests {
             agent_context: None,
         };
 
-        // http_request doesn't match db_* pattern, so it should pass
+        // file_read doesn't match db_* pattern, so it should pass
         let call = ToolCall {
             id: "c1".to_string(),
-            name: "http_request".to_string(),
+            name: "file_read".to_string(),
             arguments: Value::Null,
         };
         assert!(engine.check_permission(&ctx, &call).is_ok());

@@ -1,11 +1,12 @@
-import { useEffect, useCallback, useState, useRef } from 'react';
+import { useEffect, useCallback, useState, useRef, useMemo, memo } from 'react';
+import { sanitize } from '../utils/sanitizer';
 
 interface Props {
   code: string;
   onClose: () => void;
 }
 
-export default function HtmlPreview({ code, onClose }: Props) {
+const HtmlPreview = memo(function HtmlPreview({ code, onClose }: Props) {
   const [closing, setClosing] = useState(false);
   const [done, setDone] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -56,6 +57,9 @@ export default function HtmlPreview({ code, onClose }: Props) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  // Sanitize HTML to prevent XSS in preview iframe
+  const sanitizedCode = useMemo(() => sanitize(code), [code]);
+
   return (
     <>
       <div className={`html-preview-backdrop${closing ? ' closing' : ''}`} onClick={handleClose} />
@@ -84,12 +88,14 @@ export default function HtmlPreview({ code, onClose }: Props) {
           <iframe
             key={refreshKey}
             className="html-preview-iframe"
-            sandbox="allow-scripts"
-            srcDoc={code}
+            sandbox="allow-same-origin"
+            srcDoc={sanitizedCode}
             title="HTML Preview"
           />
         </div>
       </div>
     </>
   );
-}
+});
+
+export default HtmlPreview;

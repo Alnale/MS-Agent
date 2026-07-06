@@ -6,22 +6,22 @@ use dashmap::DashMap;
 use regex::Regex;
 use tokio::sync::RwLock;
 
-use agent_teams_core::agent_memory_cache::{AgentMemoryCache, CacheMode, ExecutionPolicy};
-use agent_teams_core::boxed_agent::{
+use agent_core::agent_memory_cache::{AgentMemoryCache, CacheMode, ExecutionPolicy};
+use agent_core::boxed_agent::{
     AgentCapabilities, AgentInput, AgentOutput, BoxedAgent, MemoryAwareAgent,
 };
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::error::{AgentTeamsError, Result};
-use agent_teams_core::memory::{MemoryKind, MemoryQuery};
-use agent_teams_core::memory_store::MemoryStore;
-use agent_teams_core::message::AgentMessage;
-use agent_teams_core::pipeline::StageMode;
-use agent_teams_core::plan::{ExecutionPlan, PlanNode, PlanStage};
-use agent_teams_core::provider::{
+use agent_core::context::AgentContext;
+use agent_core::error::{AgentTeamsError, Result};
+use agent_core::memory::{MemoryKind, MemoryQuery};
+use agent_core::memory_store::MemoryStore;
+use agent_core::message::AgentMessage;
+use agent_core::pipeline::StageMode;
+use agent_core::plan::{ExecutionPlan, PlanNode, PlanStage};
+use agent_core::provider::{
     ChatMessage, CompletionChunk, CompletionRequest, LlmProvider, ProviderError, ThinkingConfig,
 };
-use agent_teams_core::routing::RoutingTable;
-use agent_teams_core::sub_agent::SubAgentDescriptor;
+use agent_core::routing::RoutingTable;
+use agent_core::sub_agent::SubAgentDescriptor;
 
 use crate::decision_store::DecisionStore;
 use crate::prompt;
@@ -29,7 +29,7 @@ use crate::prompt;
 /// Regex for [[tool:name]], [[tool:name|{json}]], [[tool:name:subcommand]], or [[tool:name:subcommand|{json}]] syntax
 fn regex_tool_call() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[\[tool:(\w+)(?::(\w+))?(?:\|([^\]]*))?\]\]").unwrap())
+    RE.get_or_init(|| Regex::new(r"\[\[tool:(\w+)(?::(\w+))?(?:\|([^\]]*))?\]\]").expect("valid regex"))
 }
 
 /// Maximum characters to keep when truncating content for memory storage
@@ -113,7 +113,7 @@ pub struct MainAgent {
     /// Agent-local memory cache (always available)
     agent_memory_cache: AgentMemoryCache,
     /// Tool registry for native tool calling support
-    tool_registry: Option<Arc<agent_teams_core::tool::UnifiedToolRegistry>>,
+    tool_registry: Option<Arc<agent_core::tool::UnifiedToolRegistry>>,
 }
 
 impl MainAgent {
@@ -137,7 +137,7 @@ impl MainAgent {
     }
 
     /// Set the tool registry for native tool calling support
-    pub fn with_tool_registry(mut self, registry: Arc<agent_teams_core::tool::UnifiedToolRegistry>) -> Self {
+    pub fn with_tool_registry(mut self, registry: Arc<agent_core::tool::UnifiedToolRegistry>) -> Self {
         self.tool_registry = Some(registry);
         self
     }
@@ -284,7 +284,7 @@ impl MainAgent {
 
     /// Generate input hash for caching using FNV-1a algorithm
     fn input_hash(msg_type: &str, content: &str) -> String {
-        agent_teams_core::hash::fnv1a_hash_str(&[msg_type, content])
+        agent_core::hash::fnv1a_hash_str(&[msg_type, content])
     }
 
     fn thinking_config(&self) -> Option<ThinkingConfig> {
@@ -341,13 +341,6 @@ impl MainAgent {
                     Some("check".to_string())
                 } else {
                     Some("crawl".to_string()) // default for xxt
-                }
-            }
-            "http_request" => {
-                if lower.contains("搜索") || lower.contains("搜") || lower.contains("查") {
-                    Some("search".to_string())
-                } else {
-                    None
                 }
             }
             "file" => {
@@ -479,13 +472,13 @@ impl MainAgent {
         // as metadata so task_planner can use the fast path instead of relying
         // on its own LLM to recognize the tool need.
         let tool_intent = self.detect_tool_intent(msg);
-        let plan_tool_intent: Option<agent_teams_core::plan::ToolIntent> = if tool_intent.is_likely && tool_intent.confidence >= 0.65 {
+        let plan_tool_intent: Option<agent_core::plan::ToolIntent> = if tool_intent.is_likely && tool_intent.confidence >= 0.65 {
             let subcommand = Self::infer_subcommand(&msg.content, &tool_intent.suggested_tool);
             tracing::info!(
                 "Tool intent detected (suggested: {}, confidence: {:.2}, subcommand: {:?}) — injecting into plan",
                 tool_intent.suggested_tool, tool_intent.confidence, subcommand
             );
-            Some(agent_teams_core::plan::ToolIntent {
+            Some(agent_core::plan::ToolIntent {
                 tool_name: tool_intent.suggested_tool.clone(),
                 confidence: tool_intent.confidence,
                 subcommand,
@@ -888,7 +881,7 @@ impl MainAgent {
         sub_agents: &[SubAgentDescriptor],
         thinking: Option<ThinkingConfig>,
         default_model: &str,
-        _available_tools: Option<Vec<agent_teams_core::tool::Tool>>,
+        _available_tools: Option<Vec<agent_core::tool::Tool>>,
     ) -> Result<ExecutionPlan> {
         // This function handles SubAgent classification via LLM.
         // Tool routing is deferred to task_planner's routing decision (Phase 2.5).
@@ -907,21 +900,11 @@ impl MainAgent {
 
         let request = CompletionRequest {
             model: default_model.to_string(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", prompt)],
             max_tokens,
             temperature: Some(0.1),
-            system: None,
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking,
+            ..Default::default()
         };
 
         let response = provider
@@ -1101,6 +1084,7 @@ impl MainAgent {
                     role: chat_role.to_string(),
                     content: content.to_string(),
                     cache_control: None,
+                    images: None,
                     tool_call_id: None,
                     tool_calls: None,
                 })
@@ -1110,6 +1094,7 @@ impl MainAgent {
             role: "user".to_string(),
             content: synthesis_prompt,
             cache_control: None,
+            images: None,
             tool_call_id: None,
             tool_calls: None,
         });
@@ -1137,12 +1122,8 @@ impl MainAgent {
             messages,
             max_tokens: Some(128000),
             temperature: Some(0.5),
-            system: None,
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking: self.thinking_config(),
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -1193,14 +1174,8 @@ impl MainAgent {
         if sub_results.is_empty() {
             let chunk = CompletionChunk {
                 delta: "没有获取到分析结果。".to_string(),
-                thinking_delta: None,
                 done: true,
-                usage: None,
-                tool_call_delta: None,
-                tool_status: None,
-                sub_agent_results: None,
-                companion_state: None,
-                agent_progress: None,
+                ..Default::default()
             };
             return Box::new(Box::pin(futures::stream::once(async move { Ok(chunk) })));
         }
@@ -1212,12 +1187,9 @@ impl MainAgent {
             messages: messages.clone(),
             max_tokens: Some(128000),
             temperature: Some(0.5),
-            system: None,
             stream: true,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking: self.thinking_config(),
+            ..Default::default()
         };
 
         match self.provider.complete_stream(request).await {
@@ -1230,12 +1202,8 @@ impl MainAgent {
                     messages,
                     max_tokens: Some(128000),
                     temperature: Some(0.5),
-                    system: None,
-                    stream: false,
-                    tools: None,
-                    tool_choice: None,
-                    metadata: None,
                     thinking: self.thinking_config(),
+                    ..Default::default()
                 };
 
                 match self.provider.complete(request).await {
@@ -1245,25 +1213,15 @@ impl MainAgent {
                             thinking_delta: response.thinking,
                             done: true,
                             usage: Some(response.usage),
-                            tool_call_delta: None,
-                            tool_status: None,
-                            sub_agent_results: None,
-                companion_state: None,
-                            agent_progress: None,
+                            ..Default::default()
                         };
                         Box::new(Box::pin(futures::stream::once(async move { Ok(chunk) })))
                     }
                     Err(e) => {
                         let chunk = CompletionChunk {
                             delta: format!("Error: {}", e),
-                            thinking_delta: None,
                             done: true,
-                            usage: None,
-                            tool_call_delta: None,
-                            tool_status: None,
-                            sub_agent_results: None,
-                companion_state: None,
-                            agent_progress: None,
+                            ..Default::default()
                         };
                         Box::new(Box::pin(futures::stream::once(async move { Ok(chunk) })))
                     }
@@ -1292,7 +1250,7 @@ impl BoxedAgent for MainAgent {
         self
     }
 
-    fn as_memory_aware(&self) -> Option<&dyn agent_teams_core::boxed_agent::MemoryAwareAgent> {
+    fn as_memory_aware(&self) -> Option<&dyn agent_core::boxed_agent::MemoryAwareAgent> {
         Some(self)
     }
 
@@ -1315,6 +1273,7 @@ impl BoxedAgent for MainAgent {
                     role: chat_role.to_string(),
                     content: content.to_string(),
                     cache_control: None,
+                    images: None,
                     tool_call_id: None,
                     tool_calls: None,
                 })
@@ -1325,6 +1284,7 @@ impl BoxedAgent for MainAgent {
             role: "user".to_string(),
             content: input.content,
             cache_control: None,
+            images: None,
             tool_call_id: None,
             tool_calls: None,
         });
@@ -1335,11 +1295,8 @@ impl BoxedAgent for MainAgent {
             max_tokens: Some(128000),
             temperature: Some(0.7),
             system: Some(input.system_prompt),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking: self.thinking_config(),
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -1368,10 +1325,10 @@ impl MemoryAwareAgent for MainAgent {
     ) -> Result<()> {
         // Extract key facts from the output for memory storage
         if output.content.len() > 50 {
-            let fact_entry = agent_teams_core::memory::MemoryEntry {
+            let fact_entry = agent_core::memory::MemoryEntry {
                 id: uuid::Uuid::new_v4().to_string(),
                 session_id: Some(session_id.to_string()),
-                kind: agent_teams_core::memory::MemoryKind::AgentOutput,
+                kind: agent_core::memory::MemoryKind::AgentOutput,
                 content: output
                     .content
                     .chars()
@@ -1386,7 +1343,7 @@ impl MemoryAwareAgent for MainAgent {
                 tags: vec!["main_agent_output".to_string()],
                 source_agent: "main_agent".to_string(),
                 confirmed: false,
-                content_hash: Some(agent_teams_core::memory::compute_content_hash(
+                content_hash: Some(agent_core::memory::compute_content_hash(
                     &output.content,
                 )),
                 confidence: 0.8,
@@ -1408,9 +1365,9 @@ impl MemoryAwareAgent for MainAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_teams_core::context::AgentContext;
-    use agent_teams_core::message::AgentMessage;
-    use agent_teams_core::sub_agent::SubAgentDescriptor;
+    use agent_core::context::AgentContext;
+    use agent_core::message::AgentMessage;
+    use agent_core::sub_agent::SubAgentDescriptor;
 
     fn make_test_provider() -> Arc<dyn LlmProvider> {
         struct MockProvider;
@@ -1429,16 +1386,17 @@ mod tests {
                 &self,
                 _req: CompletionRequest,
             ) -> std::result::Result<
-                agent_teams_core::provider::CompletionResponse,
-                agent_teams_core::provider::ProviderError,
+                agent_core::provider::CompletionResponse,
+                agent_core::provider::ProviderError,
             > {
-                Ok(agent_teams_core::provider::CompletionResponse {
+                Ok(agent_core::provider::CompletionResponse {
                     content: r#"{"sub_agents": ["knowledge"], "reasoning": "test", "mode": "Sequential"}"#.to_string(),
                     thinking: None,
                     model: "mock-model".to_string(),
-                    usage: agent_teams_core::provider::TokenUsage::default(),
+                    usage: agent_core::provider::TokenUsage::default(),
                     stop_reason: Some("stop".to_string()),
                     tool_calls: vec![],
+                    annotations: vec![],
                 })
             }
             async fn complete_stream(
@@ -1448,15 +1406,15 @@ mod tests {
                 Box<
                     dyn futures::Stream<
                             Item = std::result::Result<
-                                agent_teams_core::provider::CompletionChunk,
-                                agent_teams_core::provider::ProviderError,
+                                agent_core::provider::CompletionChunk,
+                                agent_core::provider::ProviderError,
                             >,
                         > + Unpin
                         + Send,
                 >,
-                agent_teams_core::provider::ProviderError,
+                agent_core::provider::ProviderError,
             > {
-                Err(agent_teams_core::provider::ProviderError::Other(
+                Err(agent_core::provider::ProviderError::Other(
                     "not supported".to_string(),
                 ))
             }

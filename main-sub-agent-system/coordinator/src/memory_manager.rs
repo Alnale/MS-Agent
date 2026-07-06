@@ -7,22 +7,22 @@ use serde_json::json;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
-use agent_teams_core::dedup_engine::{DedupAction, HierarchicalDedupEngine};
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{
+use agent_core::dedup_engine::{DedupAction, HierarchicalDedupEngine};
+use agent_core::effect::AgentEffect;
+use agent_core::error::Result;
+use agent_core::memory::{
     compute_content_hash, MemoryConfig, MemoryEntry, MemoryEntryBuilder, MemoryEvent,
     MemoryEventHandler, MemoryKind, MemoryQuery,
 };
-use agent_teams_core::memory_intent::{IntentRecognizer, RankingConfig};
-use agent_teams_core::memory_reranker::MemoryReranker;
-use agent_teams_core::memory_store::{EmbeddingProvider, MemoryStore};
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
-use agent_teams_core::tag_extractor::TagExtractor;
+use agent_core::memory_intent::{IntentRecognizer, RankingConfig};
+use agent_core::memory_reranker::MemoryReranker;
+use agent_core::memory_store::{EmbeddingProvider, MemoryStore};
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
+use agent_core::tag_extractor::TagExtractor;
 
 use crate::summary_background::SummaryServiceHandle;
 
-use agent_teams_core::cosine_similarity;
+use agent_core::cosine_similarity;
 
 /// Estimate token count for text (Chinese chars ~1 token, English words ~1.3 tokens)
 fn estimate_tokens(text: &str) -> usize {
@@ -225,22 +225,11 @@ impl MemoryManager {
 如果没有值得提取的持久性信息，返回空数组 []。只输出JSON，不要其他内容。";
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: format!("对话内容：\n{}", batch_text),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", format!("对话内容：\n{}", batch_text))],
             max_tokens: Some(8192),
             temperature: Some(0.1),
             system: Some(system.to_string()),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         match llm.complete(request).await {
@@ -321,7 +310,7 @@ impl MemoryManager {
             .embedding_provider
             .embed(current_query)
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::Internal(e.to_string()))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::Internal(e.to_string()))?;
 
         // Channel 1: Semantic retrieval from long-term memory (scoped to session)
         let semantic = self
@@ -706,22 +695,11 @@ impl MemoryManager {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: user_prompt,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", user_prompt)],
             max_tokens: Some(8192),
             temperature: Some(0.1),
             system: Some(system.to_string()),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         // Run extraction asynchronously to not block the response
@@ -815,7 +793,7 @@ impl MemoryManager {
                         .await
                     {
                         Ok(r) => r,
-                        Err(_) => agent_teams_core::memory::MemoryRetrievalResult {
+                        Err(_) => agent_core::memory::MemoryRetrievalResult {
                             entries: Vec::new(),
                             total_available: 0,
                         },
@@ -927,22 +905,11 @@ impl MemoryManager {
 如果没有值得提取的持久性信息，返回空数组 []。只输出JSON，不要其他内容。";
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: batch_prompt,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", batch_prompt)],
             max_tokens: Some(8192),
             temperature: Some(0.1),
             system: Some(system.to_string()),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         // Run extraction
@@ -1031,7 +998,7 @@ impl MemoryManager {
                         .await
                     {
                         Ok(r) => r,
-                        Err(_) => agent_teams_core::memory::MemoryRetrievalResult {
+                        Err(_) => agent_core::memory::MemoryRetrievalResult {
                             entries: Vec::new(),
                             total_available: 0,
                         },
@@ -1148,7 +1115,7 @@ impl MemoryManager {
         );
 
         let embedding = embedding_result
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::Internal(e.to_string()))?;
+            .map_err(|e| agent_core::error::AgentTeamsError::Internal(e.to_string()))?;
 
         // Step 3: Semantic similarity check (scoped to session)
         let similar = self
@@ -1362,22 +1329,11 @@ impl MemoryManager {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: "请更新用户画像".to_string(),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", "请更新用户画像")],
             max_tokens: Some(8192),
             temperature: Some(0.2),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         let resp = llm.complete(request).await.map_err(|e| e.to_string())?;
@@ -1389,7 +1345,7 @@ impl MemoryManager {
 
     /// Build memory-enhanced prompt from working memory
     pub fn build_memory_prompt(working_memory: &[MemoryEntry]) -> String {
-        agent_teams_core::context::build_memory_prompt_from_entries(working_memory)
+        agent_core::context::build_memory_prompt_from_entries(working_memory)
     }
 
     /// Get reference to long-term store (for maintenance tasks)
@@ -1530,22 +1486,11 @@ impl MemoryManager {
         }
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", prompt)],
             max_tokens: Some(8192),
             temperature: Some(0.0),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         let mut resolutions = Vec::new();
@@ -1556,18 +1501,18 @@ impl MemoryManager {
                 let relation_type = match lines.get(i).map(|l| l.trim()) {
                     Some("Supersedes") => {
                         let _ = self.long_term.promote(&existing.id, -0.3).await;
-                        agent_teams_core::memory::MemoryRelationType::Supersedes
+                        agent_core::memory::MemoryRelationType::Supersedes
                     }
                     Some("Contradicts") => {
                         let _ = self.long_term.promote(&existing.id, -0.2).await;
-                        agent_teams_core::memory::MemoryRelationType::Contradicts
+                        agent_core::memory::MemoryRelationType::Contradicts
                     }
-                    _ => agent_teams_core::memory::MemoryRelationType::Related,
+                    _ => agent_core::memory::MemoryRelationType::Related,
                 };
 
                 let _ = self
                     .long_term
-                    .add_relation(agent_teams_core::memory::MemoryRelation {
+                    .add_relation(agent_core::memory::MemoryRelation {
                         source_id: entry.id.clone(),
                         target_id: existing.id.clone(),
                         relation_type,

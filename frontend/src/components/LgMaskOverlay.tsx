@@ -1,9 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import type { LgCategory } from '../App';
-import { ShaderDisplacementGenerator, fragmentShaders } from '../../liquid-glass-react-master/src/shader-utils';
-import { displacementMap, polarDisplacementMap, prominentDisplacementMap } from '../../liquid-glass-react-master/src/utils';
+import { ShaderDisplacementGenerator, fragmentShaders } from '@liquid-glass/shader-utils';
+import { displacementMap, polarDisplacementMap, prominentDisplacementMap } from '@liquid-glass/utils';
 
 const FILTER_ID = 'lg-mask-overlay-filter';
+
+const OVERLAY_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  pointerEvents: 'none',
+  zIndex: 1,
+  overflow: 'hidden',
+};
+
+const SVG_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  pointerEvents: 'none',
+};
 
 function getMap(mode: string, shaderMapUrl?: string): string {
   if (mode === "shader" && shaderMapUrl) return shaderMapUrl;
@@ -32,7 +48,7 @@ interface LgMaskOverlayProps {
  * Liquid Glass overlay for mask layers (status bar, input bar)
  * Uses SVG filter with edge-only displacement and chromatic aberration
  */
-export function LgMaskOverlay({ config, className = '' }: LgMaskOverlayProps) {
+export const LgMaskOverlay = memo(function LgMaskOverlay({ config, className = '' }: LgMaskOverlayProps) {
   const [shaderMapUrl, setShaderMapUrl] = useState('');
   const { enabled, mode, displacementScale, blurAmount, saturation, aberrationIntensity, overLight } = config;
 
@@ -51,22 +67,10 @@ export function LgMaskOverlay({ config, className = '' }: LgMaskOverlayProps) {
   return (
     <div
       className={`lg-mask-overlay ${className}`}
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 1,
-        overflow: 'hidden',
-      }}
+      style={OVERLAY_STYLE}
     >
       <svg
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none',
-        }}
+        style={SVG_STYLE}
         aria-hidden="true"
       >
         <defs>
@@ -158,4 +162,4 @@ export function LgMaskOverlay({ config, className = '' }: LgMaskOverlayProps) {
       />
     </div>
   );
-}
+});

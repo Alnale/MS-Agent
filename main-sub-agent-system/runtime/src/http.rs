@@ -9,10 +9,11 @@ use axum::{Json, Router};
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::error::{AgentTeamsError, ApiResponse};
-use agent_teams_core::message::AgentMessage;
-use agent_teams_core::registry::AgentRegistry;
+use agent_core::context::AgentContext;
+use agent_core::error::{AgentTeamsError, ApiResponse};
+use agent_core::message::AgentMessage;
+use agent_core::registry::AgentRegistry;
+use secrecy::{ExposeSecret, SecretString};
 
 use agent_teams_coordinator::MainAgentCoordinator;
 
@@ -143,16 +144,14 @@ pub struct AppState {
     pub registry: Arc<AgentRegistry>,
     pub metrics: Arc<Metrics>,
     pub cache_metrics: Arc<agent_teams_coordinator::cache_metrics::CacheMetrics>,
-    pub tool_registry: Arc<agent_teams_core::tool::UnifiedToolRegistry>,
+    pub tool_registry: Arc<agent_core::tool::UnifiedToolRegistry>,
     pub tool_engine: Arc<agent_teams_agents::tool_engine::ToolExecutionEngine>,
-    pub provider: Arc<dyn agent_teams_core::provider::LlmProvider>,
-    pub api_keys: Arc<Vec<String>>,
+    pub provider: Arc<dyn agent_core::provider::LlmProvider>,
+    pub api_keys: Arc<Vec<SecretString>>,
     pub default_model: String,
     pub presets: Arc<Vec<PresetDef>>,
     pub pipeline_timeout_secs: u64,
     pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
-    /// Per-session companion emotional state for companion mode
-    pub companion_states: Arc<dashmap::DashMap<String, agent_teams_core::companion::CompanionState>>,
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────
@@ -178,7 +177,7 @@ async fn auth_middleware(
         });
 
     match provided_key {
-        Some(key) if state.api_keys.iter().any(|k| constant_time_eq(k.as_bytes(), key.as_bytes())) => {
+        Some(key) if state.api_keys.iter().any(|k| constant_time_eq(k.expose_secret().as_bytes(), key.as_bytes())) => {
             next.run(req).await
         }
         _ => {
@@ -270,6 +269,15 @@ struct SessionEntry {
 
 static SESSION_INSTRUCTIONS: LazyLock<DashMap<String, SessionEntry>> = LazyLock::new(DashMap::new);
 
+/// Companion state with last-access tracking for TTL eviction
+struct CompanionEntry {
+    state: agent_core::companion::CompanionState,
+    last_accessed: Instant,
+}
+
+/// Per-session companion states (bounded by periodic eviction)
+static COMPANION_STATES: LazyLock<DashMap<String, CompanionEntry>> = LazyLock::new(DashMap::new);
+
 /// Evict sessions not accessed in the last hour.
 /// Runs unconditionally — called by periodic background task.
 fn evict_stale_sessions() {
@@ -277,6 +285,38 @@ fn evict_stale_sessions() {
     let duration = std::time::Duration::from_secs(3600);
     let cutoff = now.checked_sub(duration).unwrap_or(now);
     SESSION_INSTRUCTIONS.retain(|_, entry| entry.last_accessed > cutoff);
+    COMPANION_STATES.retain(|_, entry| entry.last_accessed > cutoff);
+}
+
+/// Extract companion delta from sentiment sub-agent results and apply to session state.
+/// Returns the updated companion state if a delta was found and applied.
+fn apply_companion_delta(
+    sub_results: &[agent_core::provider::SubAgentResultSummary],
+    session_id: &str,
+) -> Option<agent_core::companion::CompanionState> {
+    let sentiment = sub_results.iter().find(|r| r.agent_id == "sentiment")?;
+    let json: serde_json::Value = serde_json::from_str(&sentiment.content_summary).ok()?;
+    let delta_json = json.get("companion_delta")?;
+
+    let delta = agent_core::companion::CompanionDelta {
+        mood: delta_json.get("mood").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        mood_intensity: delta_json.get("mood_intensity").and_then(|v| v.as_f64()).map(|v| v as f32),
+        affinity_delta: delta_json.get("affinity_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+        energy_delta: delta_json.get("energy_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+        patience_delta: delta_json.get("patience_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+        trust_delta: delta_json.get("trust_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+        reason: delta_json.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        sticker: json.get("sticker").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+    };
+
+    let mut entry = COMPANION_STATES.entry(session_id.to_string())
+        .or_insert_with(|| CompanionEntry {
+            state: agent_core::companion::CompanionState::default(),
+            last_accessed: Instant::now(),
+        });
+    entry.state.apply(&delta);
+    entry.last_accessed = Instant::now();
+    Some(entry.state.clone())
 }
 
 /// Start a periodic background cleanup task for the session store.
@@ -301,6 +341,8 @@ pub fn get_session_instructions(session_id: &str) -> Option<Vec<String>> {
 }
 
 pub fn insert_session(session_id: String, instructions: Vec<String>) {
+    // Background cleanup task handles eviction — avoid synchronous retain()
+    // on the hot path which would block all DashMap operations.
     SESSION_INSTRUCTIONS.insert(
         session_id,
         SessionEntry {
@@ -343,6 +385,16 @@ async fn chat_handler(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    // Guard against session exhaustion attacks.
+    // Background cleanup task handles eviction — avoid synchronous retain() here.
+    if SESSION_INSTRUCTIONS.len() > 50_000 {
+        let err = ErrorEvent::new("Too many active sessions. Please try again later.");
+        let stream = async_stream::stream! {
+            yield Ok(Event::default().data(serde_json::to_string(&err).unwrap_or_default()));
+        };
+        return Sse::new(Box::pin(stream));
+    }
+
     // Load system instructions from session store if not provided in request
     if req.system_instructions.is_none() {
         if let Some(instructions) = get_session_instructions(&session_id) {
@@ -374,9 +426,13 @@ async fn chat_handler(
 
     // Companion mode: inject current emotional state into system instructions
     if companion_mode {
-        let companion_state = state.companion_states
+        let companion_state = COMPANION_STATES
             .entry(session_id.clone())
-            .or_insert_with(agent_teams_core::companion::CompanionState::default)
+            .or_insert_with(|| CompanionEntry {
+                state: agent_core::companion::CompanionState::default(),
+                last_accessed: Instant::now(),
+            })
+            .state
             .clone();
         let companion_desc = companion_state.to_prompt_description();
         let mut instructions = req.system_instructions.take().unwrap_or_default();
@@ -386,12 +442,6 @@ async fn chat_handler(
 
     let (ctx, msg) = build_context(req, &session_id);
 
-    // Clone state references for the async stream
-    let companion_states = if companion_mode {
-        Some(state.companion_states.clone())
-    } else {
-        None
-    };
     let stream_session_id = session_id.clone();
 
     let stream = async_stream::stream! {
@@ -406,7 +456,7 @@ async fn chat_handler(
             Err(_) => {
                 metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
                 let err = ErrorEvent::new("Request timed out");
-                yield Ok(Event::default().data(serde_json::to_string(&err).unwrap()));
+                yield Ok(Event::default().data(serde_json::to_string(&err).unwrap_or_default()));
                 return;
             }
         };
@@ -429,75 +479,56 @@ async fn chat_handler(
                         }
                         if chunk.done {
                             let ev = DoneEvent::new(&chunk.delta, None);
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         } else {
                             let ev = DeltaEvent::new(&chunk.delta, None, None);
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         }
                     } else {
                         // Full mode: emit all events (for internal frontend)
                         if let Some(ref sub_agent_results) = chunk.sub_agent_results {
-                            // Companion mode: extract companion_delta from sentiment results
-                            if let Some(ref comp_states) = companion_states {
-                                if let Some(sentiment_result) = sub_agent_results.iter().find(|r| r.agent_id == "sentiment") {
-                                    // Parse sentiment content to extract companion_delta
-                                    if let Ok(sentiment_json) = serde_json::from_str::<serde_json::Value>(&sentiment_result.content_summary) {
-                                        if let Some(delta_json) = sentiment_json.get("companion_delta") {
-                                            let mood = delta_json.get("mood").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            let mood_intensity = delta_json.get("mood_intensity").and_then(|v| v.as_f64()).map(|v| v as f32);
-                                            let affinity_delta = delta_json.get("affinity_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                            let energy_delta = delta_json.get("energy_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                            let patience_delta = delta_json.get("patience_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                            let trust_delta = delta_json.get("trust_delta").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                                            let reason = delta_json.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            let sticker = sentiment_json.get("sticker").and_then(|v| v.as_str()).unwrap_or("").to_string();
-
-                                            let delta = agent_teams_core::companion::CompanionDelta {
-                                                mood, mood_intensity,
-                                                affinity_delta, energy_delta,
-                                                patience_delta, trust_delta,
-                                                reason, sticker,
-                                            };
-
-                                            let mut entry = comp_states.entry(stream_session_id.clone())
-                                                .or_insert_with(agent_teams_core::companion::CompanionState::default);
-                                            entry.apply(&delta);
-                                            let updated_state = entry.clone();
-
-                                            // Emit companion state as SSE event
-                                            let comp_event = serde_json::json!({
-                                                "type": "companion_state",
-                                                "companion_state": updated_state,
-                                            });
-                                            yield Ok(Event::default().data(serde_json::to_string(&comp_event).unwrap()));
-                                        }
-                                    }
+                            // Companion mode: extract and apply companion delta
+                            if companion_mode {
+                                if let Some(updated) = apply_companion_delta(sub_agent_results, &stream_session_id) {
+                                    let comp_event = serde_json::json!({
+                                        "type": "companion_state",
+                                        "companion_state": updated,
+                                    });
+                                    yield Ok(Event::default().data(serde_json::to_string(&comp_event).unwrap_or_default()));
                                 }
                             }
 
                             let ev = SubAgentResultsEvent::new(sub_agent_results.clone());
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         }
 
-                        if let Some(ref tool_status) = chunk.tool_status {
+                        if let Some(ref annotations) = chunk.annotations {
+                            // Emit annotations (e.g., web search citations) as SSE event
+                            let ev = serde_json::json!({
+                                "type": "annotations",
+                                "annotations": annotations,
+                                "done": false,
+                            });
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
+                        } else if let Some(ref tool_status) = chunk.tool_status {
                             let ev = ToolStatusSseEvent::new(tool_status.clone());
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         } else if let Some(ref agent_progress) = chunk.agent_progress {
                             let ev = AgentProgressSseEvent::new(agent_progress.clone());
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         } else if chunk.done {
                             let ev = DoneEvent::new(&chunk.delta, chunk.usage.clone());
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         } else {
                             let ev = DeltaEvent::new(&chunk.delta, chunk.thinking_delta.clone(), chunk.usage.clone());
-                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap()));
+                            yield Ok(Event::default().data(serde_json::to_string(&ev).unwrap_or_default()));
                         }
                     }
                 }
                 Err(e) => {
                     metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
                     let err = ErrorEvent::new(e.to_string());
-                    yield Ok(Event::default().data(serde_json::to_string(&err).unwrap()));
+                    yield Ok(Event::default().data(serde_json::to_string(&err).unwrap_or_default()));
                     break;
                 }
             }
@@ -571,32 +602,52 @@ use include_dir::{include_dir, Dir};
 
 static FRONTEND_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../frontend/dist");
 
-async fn serve_static(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+async fn serve_static(uri: axum::http::Uri) -> axum::response::Response {
     let path = uri.path().trim_start_matches('/');
 
     // Try to serve the exact file
     if let Some(file) = FRONTEND_DIR.get_file(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return axum::response::Response::builder()
-            .status(axum::http::StatusCode::OK)
-            .header(axum::http::header::CONTENT_TYPE, mime.as_ref())
-            .body(axum::body::Body::from(file.contents()))
-            .unwrap();
+        return build_static_response(axum::http::StatusCode::OK, mime.as_ref(), file.contents());
     }
 
     // Fallback to index.html for SPA routing
     if let Some(index) = FRONTEND_DIR.get_file("index.html") {
-        return axum::response::Response::builder()
-            .status(axum::http::StatusCode::OK)
-            .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .body(axum::body::Body::from(index.contents()))
-            .unwrap();
+        return build_static_response(
+            axum::http::StatusCode::OK,
+            "text/html; charset=utf-8",
+            index.contents(),
+        );
     }
 
-    axum::response::Response::builder()
-        .status(axum::http::StatusCode::NOT_FOUND)
-        .body(axum::body::Body::from("Frontend not built"))
-        .unwrap()
+    build_static_response(
+        axum::http::StatusCode::NOT_FOUND,
+        "text/plain; charset=utf-8",
+        b"Frontend not built",
+    )
+}
+
+/// Build a static file response with a content-type header.
+/// Falls back to a headerless response if the content-type is invalid (should never happen
+/// with mime_guess output, but avoids panicking on edge cases).
+fn build_static_response(
+    status: axum::http::StatusCode,
+    content_type: &str,
+    body: &[u8],
+) -> axum::response::Response {
+    match axum::response::Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .body(axum::body::Body::from(body.to_vec()))
+    {
+        Ok(resp) => resp,
+        Err(_) => axum::response::Response::builder()
+            .status(status)
+            .body(axum::body::Body::from(body.to_vec()))
+            .unwrap_or_else(|_| {
+                axum::response::Response::new(axum::body::Body::from(body.to_vec()))
+            }),
+    }
 }
 
 // ─── OpenAPI ────────────────────────────────────────────────────
@@ -623,10 +674,10 @@ async fn serve_static(uri: axum::http::Uri) -> impl axum::response::IntoResponse
         ChatRequest, PresetDef,
         DeltaEvent, DoneEvent, ErrorEvent,
         SubAgentResultsEvent, ToolStatusSseEvent, AgentProgressSseEvent,
-        agent_teams_core::provider::TokenUsage,
-        agent_teams_core::provider::SubAgentResultSummary,
-        agent_teams_core::provider::AgentProgress,
-        agent_teams_core::tool::ToolStatusEvent,
+        agent_core::provider::TokenUsage,
+        agent_core::provider::SubAgentResultSummary,
+        agent_core::provider::AgentProgress,
+        agent_core::tool::ToolStatusEvent,
         crate::sessions::SessionInfo, crate::sessions::SetInstructionsRequest,
     )),
     tags(
@@ -637,16 +688,11 @@ async fn serve_static(uri: axum::http::Uri) -> impl axum::response::IntoResponse
 )]
 pub struct ApiDoc;
 
-/// GET /openapi.json — OpenAPI specification
-#[allow(dead_code)]
-async fn openapi_handler() -> impl IntoResponse {
-    Json(ApiDoc::openapi().to_json().unwrap_or_default())
-}
-
 // ─── Router ──────────────────────────────────────────────────────
 
 pub fn build_router(state: AppState) -> Router {
     use tower_http::limit::RequestBodyLimitLayer;
+    use tower_http::compression::CompressionLayer;
 
     let needs_auth = !state.api_keys.is_empty();
 
@@ -669,6 +715,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/v1", api_routes)
         .merge(swagger)
         .fallback(serve_static)
+        .layer(CompressionLayer::new())
         .layer(RequestBodyLimitLayer::new(1024 * 1024));
 
     let router = if needs_auth {

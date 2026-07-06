@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, memo } from 'react';
-import type { ChatMessage, AgentProgress } from '../api/types';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import type { ChatMessage, AgentProgress, WebSearchAnnotation } from '../api/types';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { MessageContentSegments } from './MessageContentSegments';
 import { copyToClipboard, escapeHtml } from '../utils/clipboard';
@@ -8,17 +8,6 @@ interface Props {
   message: ChatMessage;
   questionId?: string;
   agentProgress?: AgentProgress[];
-}
-
-/** Extract a readable domain + path label from a URL */
-function getSourceLabel(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = u.pathname.length > 1 ? u.pathname : '';
-    return u.hostname + path;
-  } catch {
-    return url;
-  }
 }
 
 function formatStreamElapsed(ms: number): string {
@@ -37,7 +26,6 @@ export const AgentMessageBubble = memo(function AgentMessageBubble({ message, qu
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [subAgentLogOpen, setSubAgentLogOpen] = useState(false);
   const [openThinking, setOpenThinking] = useState<Set<number>>(new Set());
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [streamElapsed, setStreamElapsed] = useState(0);
 
   useEffect(() => {
@@ -48,7 +36,10 @@ export const AgentMessageBubble = memo(function AgentMessageBubble({ message, qu
     return () => clearInterval(timer);
   }, [isStreaming, message.timestamp]);
 
-  const html = message.renderedHtml || (message.content ? escapeHtml(message.content).replace(/\n/g, '<br>') : '');
+  const html = useMemo(() =>
+    message.renderedHtml || (message.content ? escapeHtml(message.content).replace(/\n/g, '<br>') : ''),
+    [message.renderedHtml, message.content]
+  );
 
   const handleCopy = useCallback(async () => {
     if (!message.content) return;
@@ -212,54 +203,12 @@ export const AgentMessageBubble = memo(function AgentMessageBubble({ message, qu
             </div>
           )}
           <MessageContentSegments html={html} isStreaming={message.isStreaming} />
+          {message.annotations && message.annotations.length > 0 && (
+            <WebSearchCitations annotations={message.annotations} />
+          )}
           {message.stickerUrl && !isThinking && (
             <div className="sticker-container">
               <img src={message.stickerUrl} alt="表情包" className="sticker-img" loading="lazy" />
-            </div>
-          )}
-          {message.httpSources && message.httpSources.length > 0 && (
-            <div className="http-sources-section">
-              <button
-                className="http-sources-toggle"
-                onClick={() => setSourcesOpen(!sourcesOpen)}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="2" y1="12" x2="22" y2="12" />
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                </svg>
-                <span className="http-sources-toggle-text">
-                  参考来源
-                  <span className="http-sources-toggle-count">{message.httpSources.length}</span>
-                </span>
-                <svg className={`http-sources-chevron${sourcesOpen ? ' open' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <div className={`http-sources-body${sourcesOpen ? ' open' : ''}`}>
-                <div className="http-sources-list">
-                  {message.httpSources.map((src, i) => (
-                    <a
-                      key={i}
-                      className="http-source-item"
-                      href={src.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={src.url}
-                    >
-                      <span className="http-source-index">{i + 1}</span>
-                      <span className="http-source-icon">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                      </span>
-                      <span className="http-source-label">{src.title || getSourceLabel(src.url)}</span>
-                    </a>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
           {isStreaming && (
@@ -326,3 +275,56 @@ export const AgentMessageBubble = memo(function AgentMessageBubble({ message, qu
     </div>
   );
 });
+
+function WebSearchCitations({ annotations }: { annotations: WebSearchAnnotation[] }) {
+  const citations = annotations.filter(a => a.type === 'url_citation');
+  if (citations.length === 0) return null;
+
+  return (
+    <div className="web-search-citations">
+      <div className="citations-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span>搜索来源</span>
+        <span className="citations-count">{citations.length}</span>
+      </div>
+      <div className="citations-list">
+        {citations.map((cite, i) => (
+          <a
+            key={i}
+            className="citation-card"
+            href={cite.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <div className="citation-card-head">
+              {cite.logo_url ? (
+                <img className="citation-favicon" src={cite.logo_url} alt="" loading="lazy" />
+              ) : (
+                <svg className="citation-favicon-placeholder" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              )}
+              <span className="citation-title">{cite.title}</span>
+            </div>
+            {cite.summary && (
+              <div className="citation-summary">
+                {cite.summary.length > 120 ? cite.summary.slice(0, 120) + '...' : cite.summary}
+              </div>
+            )}
+            <div className="citation-meta">
+              {cite.site_name && <span className="citation-site">{cite.site_name}</span>}
+              {cite.publish_time && (
+                <span className="citation-time">
+                  {new Date(cite.publish_time).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}

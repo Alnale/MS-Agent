@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 /// DocFlow 服务地址
 const DOCFLOW_BASE_URL: &str = "http://localhost:5000";
@@ -54,7 +54,7 @@ impl DocFlowTool {
             if self.is_service_running().await {
                 return Ok(());
             }
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 "DocFlow 服务启动失败，请手动启动".to_string()
             ));
         }
@@ -68,7 +68,7 @@ impl DocFlowTool {
         let use_exe = docflow_exe.exists();
 
         if !use_exe && !server_py.exists() {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("找不到 DocFlow 服务文件: {} 或 docflow_server.exe", server_py.display())
             ));
         }
@@ -121,7 +121,7 @@ impl DocFlowTool {
                 DOCFLOW_STARTED.store(true, Ordering::Relaxed);
             }
             Err(e) => {
-                return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                return Err(agent_core::error::AgentTeamsError::NotFound(
                     format!("启动 DocFlow 失败: {}", e)
                 ));
             }
@@ -135,7 +135,7 @@ impl DocFlowTool {
             }
         }
 
-        Err(agent_teams_core::error::AgentTeamsError::NotFound(
+        Err(agent_core::error::AgentTeamsError::NotFound(
             "DocFlow 服务启动超时".to_string()
         ))
     }
@@ -166,7 +166,7 @@ impl DocFlowTool {
             }
         }
 
-        Err(agent_teams_core::error::AgentTeamsError::NotFound(
+        Err(agent_core::error::AgentTeamsError::NotFound(
             "找不到 DocFlow 目录，请确保 tools/DocFlow 目录存在".to_string()
         ))
     }
@@ -181,7 +181,7 @@ impl DocFlowTool {
     async fn upload_file(&self, file_path: &str) -> Result<serde_json::Value> {
         let path = std::path::Path::new(file_path);
         if !path.exists() {
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("文件不存在: {}", file_path)
             ));
         }
@@ -192,14 +192,14 @@ impl DocFlowTool {
             .to_string();
 
         let file_bytes = tokio::fs::read(path).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("读取文件失败: {}", e)
             ))?;
 
         let file_part = reqwest::multipart::Part::bytes(file_bytes)
             .file_name(file_name.clone())
             .mime_str("application/octet-stream")
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("创建文件部分失败: {}", e)
             ))?;
 
@@ -211,20 +211,20 @@ impl DocFlowTool {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("上传请求失败: {}", e)
             ))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("上传失败 ({}): {}", status, text)
             ));
         }
 
         resp.json().await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("解析上传响应失败: {}", e)
             ))
     }
@@ -243,20 +243,20 @@ impl DocFlowTool {
             .json(&body)
             .send()
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("转换请求失败: {}", e)
             ))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("转换失败 ({}): {}", status, text)
             ));
         }
 
         resp.json().await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("解析转换响应失败: {}", e)
             ))
     }
@@ -266,12 +266,12 @@ impl DocFlowTool {
             .get(format!("{}/api/status/{}", DOCFLOW_BASE_URL, job_id))
             .send()
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("状态查询失败: {}", e)
             ))?;
 
         resp.json().await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("解析状态响应失败: {}", e)
             ))
     }
@@ -282,7 +282,7 @@ impl DocFlowTool {
 
         loop {
             if attempts >= max_attempts {
-                return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                return Err(agent_core::error::AgentTeamsError::NotFound(
                     "转换超时".to_string()
                 ));
             }
@@ -294,7 +294,7 @@ impl DocFlowTool {
                 "done" => return Ok(status),
                 "error" => {
                     let error_msg = status["error"].as_str().unwrap_or("未知错误");
-                    return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+                    return Err(agent_core::error::AgentTeamsError::NotFound(
                         format!("转换失败: {}", error_msg)
                     ));
                 }
@@ -311,32 +311,32 @@ impl DocFlowTool {
             .get(format!("{}/api/download/{}", DOCFLOW_BASE_URL, job_id))
             .send()
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("下载请求失败: {}", e)
             ))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(agent_teams_core::error::AgentTeamsError::NotFound(
+            return Err(agent_core::error::AgentTeamsError::NotFound(
                 format!("下载失败 ({}): {}", status, text)
             ));
         }
 
         let bytes = resp.bytes().await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("读取下载内容失败: {}", e)
             ))?;
 
         if let Some(parent) = std::path::Path::new(output_path).parent() {
             tokio::fs::create_dir_all(parent).await
-                .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+                .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                     format!("创建输出目录失败: {}", e)
                 ))?;
         }
 
         tokio::fs::write(output_path, &bytes).await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::NotFound(
+            .map_err(|e| agent_core::error::AgentTeamsError::NotFound(
                 format!("写入文件失败: {}", e)
             ))?;
 
@@ -575,7 +575,6 @@ impl ToolExecutor for DocFlowTool {
                     "  - 转换文档格式 → 使用 docflow\n",
                     "  - 操作普通文本文件 → 使用 file\n",
                     "  - 转为 Markdown 后可用 file(read) 读取\n",
-                    "  - http_request/http_get 下载的文档可直接传入 input_path\n",
                     "  - 转换后的文件可用 file(copy/move) 移动到目标位置\n\n",
                     "action 参数：\n",
                     "  convert — 转换文档格式（自动启动服务、上传、转换、下载）\n",

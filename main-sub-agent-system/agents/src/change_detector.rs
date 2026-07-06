@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agent_teams_core::boxed_agent::{AgentCapabilities, AgentInput, AgentOutput, BoxedAgent};
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
+use agent_core::boxed_agent::{AgentCapabilities, AgentInput, AgentOutput, BoxedAgent};
+use agent_core::effect::AgentEffect;
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
 
 /// Change detector agent: detects significant changes in conversation state
 pub struct ChangeDetectorAgent {
@@ -44,25 +44,14 @@ impl BoxedAgent for ChangeDetectorAgent {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: format!(
-                    "当前消息：{}\n\n上轮effects：{:?}\n\n历史：{:?}",
-                    input.content, input.prior_effects, input.recent_history
-                ),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", format!(
+                "当前消息：{}\n\n上轮effects：{:?}\n\n历史：{:?}",
+                input.content, input.prior_effects, input.recent_history
+            ))],
             max_tokens: Some(8192),
             temperature: Some(0.2),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {

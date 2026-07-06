@@ -8,6 +8,7 @@ pub mod prompt;
 pub mod quality;
 pub mod response_agent;
 pub mod sub_agents;
+pub mod task_planner_prompt;
 pub mod tool_discovery;
 pub mod tool_engine;
 pub mod tool_param_infer;

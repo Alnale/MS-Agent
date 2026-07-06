@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use agent_teams_core::bus::AgentBus;
-use agent_teams_core::registry::SharedAgent;
+use agent_core::bus::AgentBus;
+use agent_core::registry::SharedAgent;
 
 /// Bus dispatcher: manages agent subscriptions to the bus
 pub struct BusDispatcher {

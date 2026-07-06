@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use agent_teams_core::provider::{AgentProgress, SubAgentResultSummary, TokenUsage};
+use agent_core::provider::{AgentProgress, SubAgentResultSummary, TokenUsage};
 
 // ─── SSE event types (typed, documented) ────────────────────────
 //
@@ -60,7 +60,7 @@ pub struct SubAgentResultsEvent {
 pub struct ToolStatusSseEvent {
     #[serde(rename = "type")]
     pub event_type: &'static str,
-    pub tool_status: agent_teams_core::tool::ToolStatusEvent,
+    pub tool_status: agent_core::tool::ToolStatusEvent,
     pub done: bool,
 }
 
@@ -131,7 +131,7 @@ impl SubAgentResultsEvent {
 }
 
 impl ToolStatusSseEvent {
-    pub fn new(status: agent_teams_core::tool::ToolStatusEvent) -> Self {
+    pub fn new(status: agent_core::tool::ToolStatusEvent) -> Self {
         Self {
             event_type: "tool_status",
             tool_status: status,

@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use agent_teams_core::tool::{
+use agent_core::tool::{
     Tool, ToolBuilder, ToolCall, ToolExecutionContext, ToolExecutor, ToolResult, tool_error, tool_success,
 };
-use agent_teams_core::error::Result;
+use agent_core::error::Result;
 
 /// 获取 xxt 工具目录路径
 fn xxt_dir() -> PathBuf {
@@ -207,7 +207,7 @@ impl XxtToolExecutor {
         let output = cmd
             .output()
             .await
-            .map_err(|e| agent_teams_core::error::AgentTeamsError::Provider(
+            .map_err(|e| agent_core::error::AgentTeamsError::Provider(
                 format!("Failed to execute xxt: {}", e)
             ))?;
 
@@ -258,7 +258,7 @@ impl ToolExecutor for XxtToolExecutor {
                     "fill 的 answers 格式：{\"1\":\"A\",\"2\":\"C\",\"3\":\"答案文本\"}\n\n",
                     "答案生成策略：\n",
                     "- 优先用模型自身知识，大多数题目足以应对\n",
-                    "- 仅当涉及冷门专业知识/最新数据时才用 http_request 搜索\n",
+                    "- 仅当涉及冷门专业知识/最新数据时才搜索\n",
                     "- 不要每道题都搜索，会增加耗时和失败率\n\n",
                     "工具联动：\n",
                     "- crawl 获取的题目可用 file(write) 保存备份\n",

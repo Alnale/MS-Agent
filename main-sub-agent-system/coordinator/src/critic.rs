@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agent_teams_core::context::AgentContext;
-use agent_teams_core::effect::ReviewSeverity;
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider, ThinkingConfig};
+use agent_core::context::AgentContext;
+use agent_core::effect::ReviewSeverity;
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider, ThinkingConfig};
 
 /// Critic agent: reviews response quality and flags issues
 pub struct CriticAgent {
@@ -136,21 +136,12 @@ impl CriticAgent {
 
         let request = CompletionRequest {
             model: self.default_model.clone(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: response.to_string(),
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", response.to_string())],
             max_tokens: Some(max_tokens),
             temperature: Some(0.1),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking,
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -204,23 +195,13 @@ impl CriticAgent {
 
         let request = CompletionRequest {
             model: self.default_model.clone(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", prompt)],
             max_tokens: Some(16384),
             temperature: Some(0.3),
             system: Some(
                 "你是一个响应修复专家。根据审查意见修复响应中的问题，保持原意。".to_string(),
             ),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
-            thinking: None,
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {

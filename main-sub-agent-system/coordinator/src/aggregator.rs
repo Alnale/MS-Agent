@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use agent_teams_core::effect::AgentEffect;
+use agent_core::effect::AgentEffect;
 
 /// Effect aggregator: deduplicates and merges effects from multiple agents
 pub struct EffectAggregator;

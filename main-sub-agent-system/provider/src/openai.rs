@@ -3,7 +3,7 @@ use futures::Stream;
 use secrecy::{ExposeSecret, SecretString};
 use std::sync::OnceLock;
 
-use agent_teams_core::provider::*;
+use agent_core::provider::*;
 
 use crate::sse_buffer;
 
@@ -52,10 +52,21 @@ impl OpenAiProvider {
         messages
     }
 
-    fn check_status(status: reqwest::StatusCode) -> Option<ProviderError> {
+    /// Check response status and map to ProviderError. On 429, read the
+    /// `Retry-After` header so the retry layer can honor the server's backoff
+    /// rather than guessing with local exponential delay.
+    fn check_status(response: &reqwest::Response) -> Option<ProviderError> {
+        let status = response.status();
         match status.as_u16() {
             401 => Some(ProviderError::Auth("Invalid API key".to_string())),
-            429 => Some(ProviderError::RateLimited { retry_after: None }),
+            429 => {
+                let retry_after = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok());
+                Some(ProviderError::RateLimited { retry_after })
+            }
             400..=499 => Some(ProviderError::InvalidResponse(format!(
                 "Client error: {}",
                 status
@@ -105,28 +116,44 @@ impl LlmProvider for OpenAiProvider {
 
         // Serialize tools to OpenAI function calling format
         // Enriches descriptions with data flow hints and prerequisites for better LLM tool chaining
+        // Non-function tools (e.g., web_search) are serialized with their parameters at the top level
         if let Some(tools) = &request.tools {
             let openai_tools: Vec<serde_json::Value> = tools
                 .iter()
                 .map(|t| {
-                    let mut desc = t.description.clone();
-                    if !t.data_flow_hints.is_empty() {
-                        desc.push_str(&format!("\n[数据流] {}", t.data_flow_hints.join("；")));
-                    }
-                    if !t.prerequisites.is_empty() {
-                        desc.push_str(&format!("\n[前置依赖] 通常需要先调用: {}", t.prerequisites.join(", ")));
-                    }
-                    if !t.output_fields.is_empty() {
-                        desc.push_str(&format!("\n[输出字段] {}", t.output_fields.join(", ")));
-                    }
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": desc,
-                            "parameters": t.parameters.schema,
+                    if t.tool_type != "function" {
+                        // Platform tool (e.g., web_search): flatten parameters to top level
+                        let mut tool_def = serde_json::json!({ "type": t.tool_type });
+                        if let Some(props) = t.parameters.schema.get("properties").and_then(|v| v.as_object()) {
+                            for (key, val) in props {
+                                // Extract the default value if present, otherwise use the schema value
+                                if let Some(default) = val.get("default") {
+                                    tool_def[key] = default.clone();
+                                }
+                            }
                         }
-                    })
+                        tool_def
+                    } else {
+                        // Standard function tool
+                        let mut desc = t.description.clone();
+                        if !t.data_flow_hints.is_empty() {
+                            desc.push_str(&format!("\n[数据流] {}", t.data_flow_hints.join("；")));
+                        }
+                        if !t.prerequisites.is_empty() {
+                            desc.push_str(&format!("\n[前置依赖] 通常需要先调用: {}", t.prerequisites.join(", ")));
+                        }
+                        if !t.output_fields.is_empty() {
+                            desc.push_str(&format!("\n[输出字段] {}", t.output_fields.join(", ")));
+                        }
+                        serde_json::json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": desc,
+                                "parameters": t.parameters.schema,
+                            }
+                        })
+                    }
                 })
                 .collect();
             body["tools"] = serde_json::json!(openai_tools);
@@ -135,9 +162,9 @@ impl LlmProvider for OpenAiProvider {
         // Serialize tool_choice
         if let Some(ref choice) = request.tool_choice {
             body["tool_choice"] = match choice {
-                agent_teams_core::provider::ToolChoice::Auto => serde_json::json!("auto"),
-                agent_teams_core::provider::ToolChoice::None => serde_json::json!("none"),
-                agent_teams_core::provider::ToolChoice::Required { name } => {
+                agent_core::provider::ToolChoice::Auto => serde_json::json!("auto"),
+                agent_core::provider::ToolChoice::None => serde_json::json!("none"),
+                agent_core::provider::ToolChoice::Required { name } => {
                     serde_json::json!({"type": "function", "function": {"name": name}})
                 }
             };
@@ -156,7 +183,7 @@ impl LlmProvider for OpenAiProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 
@@ -173,6 +200,10 @@ impl LlmProvider for OpenAiProvider {
             input_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cached_tokens: 0,
+            reasoning_tokens: json["usage"]["completion_tokens_details"]["reasoning_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+            total_tokens: json["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
         };
 
         // Parse tool_calls from OpenAI response format
@@ -188,7 +219,7 @@ impl LlmProvider for OpenAiProvider {
                             .as_str()
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or(serde_json::Value::Null);
-                        agent_teams_core::tool::ToolCall {
+                        agent_core::tool::ToolCall {
                             id,
                             name,
                             arguments,
@@ -211,6 +242,12 @@ impl LlmProvider for OpenAiProvider {
             );
         }
 
+        // Parse annotations (e.g., web search citations)
+        let annotations = json["choices"][0]["message"]["annotations"]
+            .as_array()
+            .map(|arr| arr.to_vec())
+            .unwrap_or_default();
+
         Ok(CompletionResponse {
             content,
             thinking: None,
@@ -218,6 +255,7 @@ impl LlmProvider for OpenAiProvider {
             usage,
             stop_reason,
             tool_calls,
+            annotations,
         })
     }
 
@@ -260,7 +298,7 @@ impl LlmProvider for OpenAiProvider {
             .await
             .map_err(|e| ProviderError::Unavailable(e.to_string()))?;
 
-        if let Some(err) = Self::check_status(response.status()) {
+        if let Some(err) = Self::check_status(&response) {
             return Err(err);
         }
 

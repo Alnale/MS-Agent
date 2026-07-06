@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { AgentTeamsClient } from '../api/client';
-import type { ChatMessage, ChatRequest, ToolStatusEvent, SubAgentResultSummary, AgentProgress, HttpSource, CompanionState } from '../api/types';
+import type { ChatMessage, ChatRequest, ToolStatusEvent, SubAgentResultSummary, AgentProgress, CompanionState } from '../api/types';
 import type { Session } from './useSession';
 import { renderContent } from '../utils/renderContent';
 
@@ -10,52 +10,6 @@ const nextId = () => crypto.randomUUID();
 function extractForceTool(content: string): string | null {
   const match = content.match(/\[\[tool:(\w+)\]\]/);
   return match ? match[1] : null;
-}
-
-/** Extract HTTP sources (URLs + titles) from http_request tool output */
-function extractHttpSources(output: unknown): HttpSource[] {
-  if (!output || typeof output !== 'object') return [];
-  const data = output as Record<string, unknown>;
-  const sources: HttpSource[] = [];
-  const seen = new Set<string>();
-
-  const addUrl = (url: string, title?: string) => {
-    if (!url || !url.startsWith('http')) return;
-    // Skip search engine internal URLs
-    if (/baidu\.com\/s[?&]|bing\.com\/search|google\.com\/search/.test(url)) return;
-    if (seen.has(url)) return;
-    seen.add(url);
-    sources.push({ url, title });
-  };
-
-  // Batch results: results[].url + results[].title
-  if (Array.isArray(data.results)) {
-    for (const r of data.results) {
-      if (r && typeof r === 'object') {
-        const url = (r as Record<string, unknown>).url;
-        const title = (r as Record<string, unknown>).title;
-        if (typeof url === 'string') addUrl(url, typeof title === 'string' ? title : undefined);
-      }
-    }
-  }
-
-  // Merged links from search results: merged_links[].href + merged_links[].text
-  if (Array.isArray(data.merged_links)) {
-    for (const link of data.merged_links) {
-      if (link && typeof link === 'object') {
-        const href = (link as Record<string, unknown>).href;
-        const text = (link as Record<string, unknown>).text;
-        if (typeof href === 'string') addUrl(href, typeof text === 'string' ? text : undefined);
-      }
-    }
-  }
-
-  // Single request: output.url
-  if (typeof data.url === 'string' && sources.length === 0) {
-    addUrl(data.url);
-  }
-
-  return sources;
 }
 
 interface UseChatOptions {
@@ -73,12 +27,21 @@ export function useChat(options: UseChatOptions = {}) {
   const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const isStreamingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [toolEvents, setToolEvents] = useState<ToolStatusEvent[]>([]);
   const [agentProgress, setAgentProgress] = useState<AgentProgress[]>([]);
   const [companionState, setCompanionState] = useState<CompanionState | null>(null);
   const streamingMsgIdRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state
+  messagesRef.current = messages;
+
+  // Keep onToolResult in a ref to avoid stale closures during streaming
+  const onToolResultRef = useRef(options.onToolResult);
+  onToolResultRef.current = options.onToolResult;
 
   // Only reset when session ID actually changes, not on every session object reference change.
   // This prevents a cascade: setMessages → onMessagesChange → saveSession → sessions update
@@ -125,7 +88,7 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendMessage = useCallback(async (content: string, forceResend = false) => {
     if (!content.trim()) return;
-    if (isStreaming && !forceResend) return;
+    if (isStreamingRef.current && !forceResend) return;
 
     setError(null);
 
@@ -148,13 +111,14 @@ export function useChat(options: UseChatOptions = {}) {
 
     setMessages(prev => [...prev, userMsg, assistantMsg]);
     setIsStreaming(true);
+    isStreamingRef.current = true;
     streamingMsgIdRef.current = assistantMsg.id;
 
     // All messages go through /chat — unified path
     // Extract [[tool:name]] hint and pass as force_tool to backend
     const forceTool = extractForceTool(content.trim());
 
-    const history = messages
+    const history = messagesRef.current
       .filter(m => m.content && m.content.trim().length > 0 && !m.isStreaming)
       .map(m => ({
         sender_type: m.role === 'assistant' ? 'assistant' : 'user',
@@ -176,7 +140,6 @@ export function useChat(options: UseChatOptions = {}) {
       let accumulated = '';
       let thinkingContent = '';
       let subAgentResults: SubAgentResultSummary[] | undefined;
-      let httpSources: HttpSource[] | undefined;
       let stickerUrl: string | undefined;
 
       // Reset tool events and progress for this turn
@@ -207,15 +170,8 @@ export function useChat(options: UseChatOptions = {}) {
         // Handle tool status events
         if (chunk.type === 'tool_status' && chunk.tool_status) {
           setToolEvents(prev => [...prev, chunk.tool_status!]);
-          if (chunk.tool_status.status === 'completed' && options.onToolResult) {
-            options.onToolResult(chunk.tool_status);
-          }
-          // Extract HTTP sources from http_request tool output
-          if (chunk.tool_status.status === 'completed' && chunk.tool_status.tool_name === 'http_request' && chunk.tool_status.success) {
-            const sources = extractHttpSources(chunk.tool_status.output);
-            if (sources.length > 0) {
-              httpSources = httpSources ? [...httpSources, ...sources] : sources;
-            }
+          if (chunk.tool_status.status === 'completed' && onToolResultRef.current) {
+            onToolResultRef.current(chunk.tool_status);
           }
           continue;
         }
@@ -258,6 +214,18 @@ export function useChat(options: UseChatOptions = {}) {
           continue;
         }
 
+        // Handle annotations (e.g., web search citations)
+        if (chunk.annotations && chunk.annotations.length > 0) {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === assistantMsg.id
+                ? { ...m, annotations: [...(m.annotations || []), ...chunk.annotations!] }
+                : m
+            )
+          );
+          continue;
+        }
+
         if (chunk.delta) {
           accumulated += chunk.delta;
         }
@@ -292,7 +260,6 @@ export function useChat(options: UseChatOptions = {}) {
                 renderedHtml: renderContent(finalContent),
                 thinking: finalThinking,
                 subAgentResults: subAgentResults,
-                httpSources: httpSources,
                 stickerUrl: stickerUrl,
                 isStreaming: false,
                 responseTimeMs,
@@ -327,14 +294,15 @@ export function useChat(options: UseChatOptions = {}) {
       }
     } finally {
       setIsStreaming(false);
+      isStreamingRef.current = false;
       streamingMsgIdRef.current = null;
     }
-  }, [isStreaming, messages, options.getSystemInstructions]);
+  }, [options.getSystemInstructions, options.companionMode]);
 
   const stopGeneration = useCallback(() => {
-    if (!isStreaming) return;
+    if (!isStreamingRef.current) return;
     clientRef.current.abort();
-  }, [isStreaming]);
+  }, []);
 
   const clearMessages = useCallback(() => {
     setMessages([]);

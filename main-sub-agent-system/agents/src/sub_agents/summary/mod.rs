@@ -8,15 +8,15 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 
-use agent_teams_core::boxed_agent::{
+use agent_core::boxed_agent::{
     AgentCapabilities, AgentInput, AgentOutput, BoxedAgent, MemoryAwareAgent,
 };
-use agent_teams_core::effect::AgentEffect;
-use agent_teams_core::memory::{
+use agent_core::effect::AgentEffect;
+use agent_core::memory::{
     compute_content_hash, MemoryEntry, MemoryKind, MemoryQuery, MemoryRelation, MemoryRelationType,
 };
-use agent_teams_core::memory_store::MemoryStore;
-use agent_teams_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
+use agent_core::memory_store::MemoryStore;
+use agent_core::provider::{ChatMessage, CompletionRequest, LlmProvider};
 
 const MAX_HISTORY_CHARS: usize = 4000;
 const MAX_TURNS_FOR_SUMMARY: usize = 20;
@@ -45,12 +45,12 @@ pub struct SummarySubAgent {
     /// Optional memory store for reading existing summaries (incremental mode)
     memory_store: Option<Arc<dyn MemoryStore>>,
     /// Embedding provider for generating vectors
-    embedding_provider: Option<Arc<dyn agent_teams_core::memory_store::EmbeddingProvider>>,
+    embedding_provider: Option<Arc<dyn agent_core::memory_store::EmbeddingProvider>>,
     /// Operating mode
     mode: SummaryAgentMode,
     /// Agent-local memory cache (always available)
-    agent_memory_cache: agent_teams_core::AgentMemoryCache,
-    thinking_config: Option<agent_teams_core::provider::ThinkingConfig>,
+    agent_memory_cache: agent_core::AgentMemoryCache,
+    thinking_config: Option<agent_core::provider::ThinkingConfig>,
 }
 
 impl SummarySubAgent {
@@ -60,12 +60,12 @@ impl SummarySubAgent {
             memory_store: None,
             embedding_provider: None,
             mode: SummaryAgentMode::default(),
-            agent_memory_cache: agent_teams_core::AgentMemoryCache::new("summary".to_string(), 100),
+            agent_memory_cache: agent_core::AgentMemoryCache::new("summary".to_string(), 100),
             thinking_config: None,
         }
     }
 
-    pub fn with_thinking_config(mut self, config: Option<agent_teams_core::provider::ThinkingConfig>) -> Self {
+    pub fn with_thinking_config(mut self, config: Option<agent_core::provider::ThinkingConfig>) -> Self {
         self.thinking_config = config;
         self
     }
@@ -83,7 +83,7 @@ impl SummarySubAgent {
     }
 
     /// Set the agent-local memory cache with custom configuration
-    pub fn with_agent_memory_cache(mut self, cache: agent_teams_core::AgentMemoryCache) -> Self {
+    pub fn with_agent_memory_cache(mut self, cache: agent_core::AgentMemoryCache) -> Self {
         self.agent_memory_cache = cache;
         self
     }
@@ -91,7 +91,7 @@ impl SummarySubAgent {
     /// Set embedding provider for vector generation
     pub fn with_embedding_provider(
         mut self,
-        provider: Arc<dyn agent_teams_core::memory_store::EmbeddingProvider>,
+        provider: Arc<dyn agent_core::memory_store::EmbeddingProvider>,
     ) -> Self {
         self.embedding_provider = Some(provider);
         self
@@ -159,7 +159,7 @@ impl SummarySubAgent {
                 ..Default::default()
             })
             .await
-            .unwrap_or_else(|_| agent_teams_core::memory::MemoryRetrievalResult {
+            .unwrap_or_else(|_| agent_core::memory::MemoryRetrievalResult {
                 entries: Vec::new(),
                 total_available: 0,
             });
@@ -376,7 +376,7 @@ impl SummarySubAgent {
                     ..Default::default()
                 })
                 .await
-                .unwrap_or_else(|_| agent_teams_core::memory::MemoryRetrievalResult {
+                .unwrap_or_else(|_| agent_core::memory::MemoryRetrievalResult {
                     entries: Vec::new(),
                     total_available: 0,
                 });
@@ -452,7 +452,7 @@ impl BoxedAgent for SummarySubAgent {
         self
     }
 
-    fn as_memory_aware(&self) -> Option<&dyn agent_teams_core::boxed_agent::MemoryAwareAgent> {
+    fn as_memory_aware(&self) -> Option<&dyn agent_core::boxed_agent::MemoryAwareAgent> {
         Some(self)
     }
 
@@ -518,22 +518,12 @@ impl BoxedAgent for SummarySubAgent {
         );
 
         let request = CompletionRequest {
-            model: String::new(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: enhanced_content,
-                cache_control: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
+            messages: vec![ChatMessage::simple("user", enhanced_content)],
             max_tokens: Some(32768),
             temperature: Some(0.2),
             system: Some(system),
-            stream: false,
-            tools: None,
-            tool_choice: None,
-            metadata: None,
             thinking: self.thinking_config.clone(),
+            ..Default::default()
         };
 
         match self.provider.complete(request).await {
@@ -577,7 +567,7 @@ impl BoxedAgent for SummarySubAgent {
 
 #[async_trait]
 impl MemoryAwareAgent for SummarySubAgent {
-    fn memory_cache(&self) -> &agent_teams_core::AgentMemoryCache {
+    fn memory_cache(&self) -> &agent_core::AgentMemoryCache {
         &self.agent_memory_cache
     }
 
@@ -586,7 +576,7 @@ impl MemoryAwareAgent for SummarySubAgent {
         store: &Arc<dyn MemoryStore>,
         session_id: &str,
         output: &AgentOutput,
-    ) -> agent_teams_core::error::Result<()> {
+    ) -> agent_core::error::Result<()> {
         // Parse the output content as structured summary
         let structured = Self::parse_structured_output(&output.content);
 
@@ -665,7 +655,7 @@ impl MemoryAwareAgent for SummarySubAgent {
         store: &Arc<dyn MemoryStore>,
         session_id: &str,
         _query: &str,
-    ) -> agent_teams_core::error::Result<String> {
+    ) -> agent_core::error::Result<String> {
         let summaries = store
             .retrieve(MemoryQuery {
                 kinds: vec![MemoryKind::Summary],

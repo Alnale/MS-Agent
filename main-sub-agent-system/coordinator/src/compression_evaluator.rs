@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agent_teams_core::error::Result;
-use agent_teams_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
-use agent_teams_core::memory_store::{EmbeddingProvider, MemoryStore};
+use agent_core::error::Result;
+use agent_core::memory::{MemoryEntry, MemoryKind, MemoryQuery};
+use agent_core::memory_store::{EmbeddingProvider, MemoryStore};
 
 /// Evaluates compression quality by measuring information retention
 pub struct CompressionEvaluator {
@@ -177,7 +177,7 @@ impl CompressionEvaluator {
     }
 }
 
-use agent_teams_core::cosine_similarity;
+use agent_core::cosine_similarity;
 
 /// Extract key phrases from text (numbers, proper nouns, important terms)
 fn extract_key_phrases(text: &str) -> Vec<String> {
